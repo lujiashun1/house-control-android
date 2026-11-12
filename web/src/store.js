@@ -12,9 +12,22 @@ function defaultLight(cfg) {
   return { on: false, brightness: 0.8, temp: 3000, color: cfg.color || null };
 }
 
-// A fan has no platform behind it: on/off, a speed step and the sweep, all in this WebView.
+// A fan is either simulated here or driven through a Home Assistant `fan` entity, in the
+// same vocabulary a Home Assistant fan speaks: on, percentage 0…100, a preset name, the
+// direction it turns and whether it oscillates. `speed` (0…5) stays the one number the
+// rotor uses in the 3D view, so a percentage and a step are two views of the same thing.
 function defaultFan(cfg) {
-  return { on: false, speed: cfg.speed ?? 2, oscillate: false };
+  const speed = cfg.speed ?? 2;
+  return {
+    on: false, speed, percent: speed * 20, oscillate: false,
+    preset: cfg.preset ?? null, direction: cfg.direction ?? 'forward',
+  };
+}
+
+// A curtain is cloth and a rod: how far it is drawn, what colour the cloth is, and how much
+// light it lets through. Nothing about it is a device.
+function defaultCurtain(cfg) {
+  return { open: cfg.open ?? 0.3, color: cfg.color || '#e8e2d6', opacity: cfg.opacity ?? 0.62 };
 }
 
 function defaultAC(cfg, outdoor) {
@@ -31,13 +44,18 @@ export function createStore(config) {
   const lightCfg = new Map(config.lights.map((l) => [l.id, l]));
   const acCfg = new Map(config.acs.map((a) => [a.id, a]));
   const fanCfg = new Map((config.fans || []).map((f) => [f.id, f]));
+  const curtainCfg = new Map((config.curtains || []).map((c) => [c.id, c]));
 
-  const state = { lights: {}, acs: {}, fans: {}, scene: null };
+  const state = { lights: {}, acs: {}, fans: {}, curtains: {}, scene: null };
   for (const l of config.lights) state.lights[l.id] = defaultLight(l);
   for (const f of config.fans || []) state.fans[f.id] = defaultFan(f);
+  for (const c of config.curtains || []) state.curtains[c.id] = defaultCurtain(c);
   for (const a of config.acs) state.acs[a.id] = defaultAC(a, config.outdoorTemp);
   // What each real AC can do, as reported by the native side. A simulated AC can do everything.
   const features = {};
+  // What each real fan does, from its Home Assistant entity: percentage step, preset names,
+  // whether it can oscillate and reverse. An unlinked fan can do all of it.
+  const fanFeatures = {};
 
   let restored = false;
   try {
@@ -46,7 +64,9 @@ export function createStore(config) {
       for (const [id, s] of Object.entries(saved.lights || {})) if (state.lights[id]) Object.assign(state.lights[id], s);
       for (const [id, s] of Object.entries(saved.acs || {})) if (state.acs[id]) Object.assign(state.acs[id], s);
       for (const [id, s] of Object.entries(saved.fans || {})) if (state.fans[id]) Object.assign(state.fans[id], s);
+      for (const [id, s] of Object.entries(saved.curtains || {})) if (state.curtains[id]) Object.assign(state.curtains[id], s);
       for (const [id, f] of Object.entries(saved.features || {})) if (state.acs[id]) features[id] = f;
+      for (const [id, f] of Object.entries(saved.fanFeatures || {})) if (state.fans[id]) fanFeatures[id] = f;
       state.scene = saved.scene || null;
       restored = true;
     }
@@ -57,7 +77,7 @@ export function createStore(config) {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ home: config.name, ...state, features }));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ home: config.name, ...state, features, fanFeatures }));
       } catch { /* ignore */ }
     }, 200);
   }
@@ -69,19 +89,24 @@ export function createStore(config) {
       post('summary', summary());
       // The native shell passes this on to its other views of the same home (the panel
       // and the island each run their own store), which adopt it without re-sending.
-      if (!change.adopted) post('state', { lights: state.lights, acs: state.acs, fans: state.fans, scene: state.scene, source: change.source ?? store.source ?? null });
+      if (!change.adopted) post('state', { lights: state.lights, acs: state.acs, fans: state.fans, curtains: state.curtains, scene: state.scene, source: change.source ?? store.source ?? null });
     }
   }
 
   // One command per device is in flight at a time. Whatever changes meanwhile is merged
   // into a single follow-up, so dragging a slider costs a couple of requests (or infrared
   // key presses) instead of dozens. A change the device refuses is rolled back.
-  const COOL_DOWN = { light: 300, ac: 900 };
+  const COOL_DOWN = { light: 300, ac: 900, fan: 500, cover: 700 };
   const outbox = new Map();
+
+  const stateOf = (kind, id) => kind === 'light' ? state.lights[id]
+    : kind === 'fan' ? state.fans[id]
+    : kind === 'cover' ? state.curtains[id]
+    : state.acs[id];
 
   function transmit(kind, id, patch) {
     if (!isNative) return Promise.resolve();
-    const current = kind === 'light' ? state.lights[id] : state.acs[id];
+    const current = stateOf(kind, id);
     const sent = call('command', { kind, id, patch, state: { ...current } });
     // Never let a lost reply block the device for good.
     return Promise.race([sent, new Promise((resolve) => setTimeout(resolve, 20000))]);
@@ -112,7 +137,7 @@ export function createStore(config) {
   }
 
   function rollback(kind, id, patch, before, entry, error) {
-    const current = kind === 'light' ? state.lights[id] : state.acs[id];
+    const current = stateOf(kind, id);
     let any = false;
     for (const key of error.detail?.failed || Object.keys(patch)) {
       if (!(key in patch)) continue;
@@ -172,19 +197,60 @@ export function createStore(config) {
     const out = {};
     if ('on' in patch) out.on = Boolean(patch.on);
     if ('speed' in patch) out.speed = clamp(Math.round(Number(patch.speed) || 0), 0, 5);
+    if ('percent' in patch) out.percent = clamp(Math.round(Number(patch.percent) || 0), 0, 100);
     if ('oscillate' in patch) out.oscillate = Boolean(patch.oscillate);
+    if ('direction' in patch) out.direction = patch.direction === 'reverse' ? 'reverse' : 'forward';
+    if ('preset' in patch) out.preset = patch.preset == null ? null : String(patch.preset);
+    // The step and the percentage follow each other; 0 steps means it is off.
+    if ('speed' in out) out.percent = out.speed * 20;
+    if ('percent' in out) out.speed = out.percent > 0 ? clamp(Math.round(out.percent / 20), 1, 5) : 0;
     return out;
   }
 
-  function writeFan(id, patch) {
+  // A fan is a real device when it carries a `link` to a Home Assistant `fan` entity; then a
+ // change goes out through the native side like an AC's. Otherwise it is only the 3D one.
+  function writeFan(id, patch, { remote = false } = {}) {
     const cur = state.fans[id];
+    const cfg = fanCfg.get(id);
     if (!cur) return false;
     const clean = sanitizeFan(patch);
+    // Switching it on at step 0 switches it on at the first step.
+    const step = clean.speed ?? cur.speed;
+    if (clean.on === true && step === 0) { clean.speed = 1; clean.percent = 20; }
     const diff = Object.fromEntries(Object.entries(clean).filter(([k, v]) => cur[k] !== v));
     if (!Object.keys(diff).length) return false;
     // A speed change implies it is on; the off step is what turns it off.
-    if (diff.speed > 0 && diff.on === undefined && !cur.on) diff.on = true;
+    if ((diff.speed > 0 || diff.percent > 0) && diff.on === undefined && !cur.on) diff.on = true;
+    const before = Object.fromEntries(Object.keys(diff).map((k) => [k, cur[k]]));
+    Object.assign(cur, clean, diff.on === true ? { on: true } : {});
+    // A fan with a `link` to a Home Assistant fan entity is a real device; a change goes out
+    // through the native side the same way an AC's does.
+    if (!remote && cfg.link?.service) dispatch('fan', id, diff, before);
+    return true;
+  }
+
+  // The cloth's shape is kept clean whether the curtain is simulated or a real cover.
+  function sanitizeCurtain(patch) {
+    const out = {};
+    if ('open' in patch) out.open = clamp(Number(patch.open) || 0, 0, 1);
+    if ('opacity' in patch) out.opacity = clamp(Number(patch.opacity) || 0, 0.06, 1);
+    if ('color' in patch) out.color = /^#[0-9a-f]{6}$/i.test(String(patch.color)) ? String(patch.color).toLowerCase() : null;
+    if (out.color === null) delete out.color;
+    return out;
+  }
+
+  function writeCurtain(id, patch, { remote = false } = {}) {
+    const cur = state.curtains[id];
+    const cfg = curtainCfg.get(id);
+    if (!cur) return false;
+    const clean = sanitizeCurtain(patch);
+    // Opacity and colour are ours alone: a cover entity knows nothing about them.
+    const diff = Object.fromEntries(Object.entries(clean).filter(([k, v]) => cur[k] !== v));
+    if (!Object.keys(diff).length) return false;
+    const before = Object.fromEntries(Object.keys(diff).map((k) => [k, cur[k]]));
     Object.assign(cur, diff);
+    // A curtain linked to a Home Assistant cover sends its position; a simulated one just moves.
+    if (!remote && cfg.link?.service && 'open' in diff) dispatch('cover', id, { open: diff.open }, before);
     return true;
   }
 
@@ -207,6 +273,7 @@ export function createStore(config) {
     lightCfg,
     acCfg,
     fanCfg,
+    curtainCfg,
     summary,
     /** Set by the UI: called with (device id, message) when a real device refuses a change. */
     onDeviceError: null,
@@ -216,6 +283,10 @@ export function createStore(config) {
     /** What the panel may offer for this AC: modes, fan speeds, and the optional extras. */
     acFeatures(id) {
       return features[id] || { modes: AC_MODES, fans: AC_FANS, sleep: true, eco: true, swing: true };
+    },
+    /** What the panel may offer for this fan: the percentage step, presets, oscillation and reverse. */
+    fanFeatures(id) {
+      return fanFeatures[id] || { percentageStep: 20, presets: [], oscillate: true, direction: false };
     },
 
     on(fn) { listeners.add(fn); return () => listeners.delete(fn); },
@@ -241,6 +312,14 @@ export function createStore(config) {
     toggleFan(id) {
       const fan = state.fans[id];
       if (fan) store.setFan(id, { on: !fan.on });
+    },
+    setCurtain(id, patch) {
+      if (writeCurtain(id, patch)) emit({ type: 'curtain', id });
+    },
+    setAllCurtains(open) {
+      let any = false;
+      for (const id of Object.keys(state.curtains)) any = writeCurtain(id, { open }) || any;
+      if (any) emit({ type: 'bulk' });
     },
     setAllFans(on) {
       let any = false;
@@ -269,7 +348,7 @@ export function createStore(config) {
     },
 
     /** Reports the state again, for a view that has only just started. */
-    share() { post('state', { lights: state.lights, acs: state.acs, fans: state.fans, scene: state.scene }); },
+    share() { post('state', { lights: state.lights, acs: state.acs, fans: state.fans, curtains: state.curtains, scene: state.scene }); },
 
     // The state of another view of this home (see emit). Nothing goes to the devices:
     // the view where the change was made has already sent it.
@@ -277,7 +356,8 @@ export function createStore(config) {
       let any = false;
       for (const [id, s] of Object.entries(other.lights || {})) any = writeLight(id, s, { remote: true }) || any;
       for (const [id, s] of Object.entries(other.acs || {})) any = writeAC(id, s, { remote: true }) || any;
-      for (const [id, s] of Object.entries(other.fans || {})) any = writeFan(id, s) || any;
+      for (const [id, s] of Object.entries(other.fans || {})) any = writeFan(id, s, { remote: true }) || any;
+      for (const [id, s] of Object.entries(other.curtains || {})) any = writeCurtain(id, s, { remote: true }) || any;
       const scene = other.scene ?? null;
       if (scene !== state.scene) { state.scene = scene; any = true; }
       if (any) emit({ type: 'bulk', remote: true, adopted: true, source: other.source || null });
@@ -288,10 +368,11 @@ export function createStore(config) {
       let any = false;
       for (const [id, patch] of Object.entries(update.lights || {})) any = writeLight(id, patch, { remote: true }) || any;
       for (const [id, patch] of Object.entries(update.acs || {})) any = writeAC(id, patch, { remote: true }) || any;
+      for (const [id, f] of Object.entries(update.fans || {})) any = writeFan(id, f, { remote: true }) || any;
+      for (const [id, c] of Object.entries(update.curtains || {})) any = writeCurtain(id, c, { remote: true }) || any;
       for (const [id, f] of Object.entries(update.features || {})) {
-        if (!state.acs[id] || JSON.stringify(features[id]) === JSON.stringify(f)) continue;
-        features[id] = f;
-        any = true;
+        if (state.acs[id] && JSON.stringify(features[id]) !== JSON.stringify(f)) { features[id] = f; any = true; }
+        if (state.fans[id] && JSON.stringify(fanFeatures[id]) !== JSON.stringify(f)) { fanFeatures[id] = f; any = true; }
       }
       if (any) emit({ type: 'bulk', remote: true });
     },

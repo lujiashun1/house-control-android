@@ -91,7 +91,7 @@ class DeviceHub(
         val others = HashMap<String, Link>()
         val sensors = HashMap<String, Pair<String, String>>()
         if (plan != null) {
-            for ((kind, key) in listOf("light" to "lights", "ac" to "acs")) {
+            for ((kind, key) in listOf("light" to "lights", "ac" to "acs", "fan" to "fans", "cover" to "curtains")) {
                 for (device in plan.objects(key)) {
                     val id = device.string("id") ?: continue
                     val sensor = sensorLink(device.optJSONObject("sensor"))
@@ -223,7 +223,7 @@ class DeviceHub(
         val fromServices = servicePart.await()
         if (fromTuya == null && fromServices == null) return@coroutineScope null
         val merged = JSONObject()
-        for (key in listOf("lights", "acs", "features")) {
+        for (key in listOf("lights", "acs", "fans", "curtains", "features")) {
             val section = fromTuya?.optJSONObject(key)?.copy() ?: JSONObject()
             val more = fromServices?.optJSONObject(key) ?: JSONObject()
             for (id in more.keyList()) {
@@ -250,10 +250,20 @@ class DeviceHub(
         if (!answered) return null
         val lights = JSONObject()
         val acs = JSONObject()
+        val fans = JSONObject()
+        val curtains = JSONObject()
         val features = JSONObject()
         for ((id, link) in serviceLinks) {
             val reading = readings[link.service]?.get(link.id)
             if (link.kind == DeviceKind.LIGHT && reading?.online != false) reading?.light?.let { lights.put(id, it) }
+            if (link.kind == DeviceKind.FAN) {
+                if (reading?.online != false) reading?.fan?.let { fans.put(id, it) }
+                reading?.features?.let { features.put(id, it) }
+            }
+            if (link.kind == DeviceKind.COVER) {
+                if (reading?.online != false) reading?.cover?.let { curtains.put(id, it) }
+                reading?.features?.let { features.put(id, it) }
+            }
             if (link.kind == DeviceKind.AC) {
                 val ac = if (reading?.online == false) JSONObject() else reading?.ac?.copy() ?: JSONObject()
                 link.sensor?.let { (service, sensor) -> readings[service]?.get(sensor)?.temperature }?.let { ac.put("roomTemp", it) }
@@ -264,7 +274,7 @@ class DeviceHub(
         for ((id, sensor) in tuyaSensors) {
             readings[sensor.first]?.get(sensor.second)?.temperature?.let { acs.put(id, jsonOf("roomTemp" to it)) }
         }
-        return jsonOf("lights" to lights, "acs" to acs, "features" to features)
+        return jsonOf("lights" to lights, "acs" to acs, "fans" to fans, "curtains" to curtains, "features" to features)
     }
 
     private suspend fun pollCloud(): JSONObject? {

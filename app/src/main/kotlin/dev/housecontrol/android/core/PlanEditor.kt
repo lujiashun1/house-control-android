@@ -53,7 +53,9 @@ class PlanEditor(plan: JSONObject) {
         get() {
             val names = rooms.associate { it.id to it.title }
             val out = mutableListOf<Item>()
-            for ((kind, key) in listOf(DeviceKind.LIGHT to "lights", DeviceKind.AC to "acs")) {
+            for ((kind, key) in listOf(
+                DeviceKind.LIGHT to "lights", DeviceKind.AC to "acs", DeviceKind.FAN to "fans", DeviceKind.COVER to "curtains",
+            )) {
                 for (device in plan.objects(key)) {
                     val id = device.string("id") ?: continue
                     val room = device.optString("room")
@@ -77,7 +79,9 @@ class PlanEditor(plan: JSONObject) {
     // MARK: - Linking
 
     private fun find(id: String): JSONObject? {
-        for (key in listOf("lights", "acs")) plan.objects(key).firstOrNull { it.optString("id") == id }?.let { return it }
+        for (key in listOf("lights", "acs", "fans", "curtains")) {
+            plan.objects(key).firstOrNull { it.optString("id") == id }?.let { return it }
+        }
         return null
     }
 
@@ -102,8 +106,12 @@ class PlanEditor(plan: JSONObject) {
             // A Smart Life thermometer only works beside a Smart Life AC.
             item.remove("tuya")
         }
-        val isAC = item.has("wall")
-        if (!isAC) device.optJSONArray("capabilities")?.let { item.put("capabilities", JSONArray(it.strings())) }
+        // What the device is decides what the plan item may take from it — a curtain also has a
+        // `wall` key, so `wall` alone is no longer enough to call something an air conditioner.
+        val kind = device.string("kind")
+        val isAC = kind == "ac"
+        val isLight = kind == null || kind == "light"
+        if (isLight) device.optJSONArray("capabilities")?.let { item.put("capabilities", JSONArray(it.strings())) }
         val min = device.double("min")
         val max = device.double("max")
         if (isAC && min != null && max != null) {

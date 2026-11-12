@@ -9,6 +9,7 @@ import { buildFurniture } from './furniture.js';
 import { LightUnit } from './lights.js';
 import { ACUnit } from './ac.js';
 import { FanUnit } from './fan.js';
+import { CurtainUnit } from './curtain.js';
 
 export const STAGE_BG = '#0a0e1a';
 
@@ -117,16 +118,25 @@ export function createWorld(canvas, config, store, { onHover, onPick, onLevel = 
     fans.set(cfg.id, unit);
     floors.get(cfg.level).group.add(unit.group);
   }
+
+  // Curtains hang on a wall and only move while they are being drawn or sheered.
+  const curtains = new Map();
+  for (const cfg of (config.curtains || [])) {
+    const unit = new CurtainUnit(cfg);
+    curtains.set(cfg.id, unit);
+    floors.get(cfg.level).group.add(unit.group);
+  }
   let hitTargets = [];
 
   // The floors above the one on show are lifted off; the ones under it stay, unlit, as its base.
   function showLevel() {
     for (const [id, { group }] of floors) group.visible = levelById.get(id).elevation <= level.elevation;
-    for (const unit of [...lights.values(), ...acs.values(), ...fans.values()]) unit.group.visible = unit.cfg.level === level.id;
+    for (const unit of [...lights.values(), ...acs.values(), ...fans.values(), ...curtains.values()]) unit.group.visible = unit.cfg.level === level.id;
     hitTargets = [
       ...[...lights.values()].filter((u) => u.group.visible).map((u) => u.hit),
       ...[...acs.values()].filter((u) => u.group.visible).map((u) => u.hit),
       ...[...fans.values()].filter((u) => u.group.visible).map((u) => u.hit),
+      ...[...curtains.values()].filter((u) => u.group.visible).map((u) => u.hit),
       ...floors.get(level.id).house.floors,
     ];
     assignShadows();
@@ -317,6 +327,7 @@ export function createWorld(canvas, config, store, { onHover, onPick, onLevel = 
     }
     for (const [id, unit] of acs) unit.apply(store.state.acs[id], opts);
     for (const [id, unit] of fans) unit.apply(store.state.fans?.[id], opts);
+    for (const [id, unit] of curtains) unit.apply(store.state.curtains?.[id], opts);
     wake();
   }
 
@@ -325,6 +336,7 @@ export function createWorld(canvas, config, store, { onHover, onPick, onLevel = 
     if (change.type === 'light') lights.get(change.id).apply(store.state.lights[change.id]);
     else if (change.type === 'ac') acs.get(change.id).apply(store.state.acs[change.id]);
     else if (change.type === 'fan') fans.get(change.id).apply(store.state.fans?.[change.id]);
+    else if (change.type === 'curtain') curtains.get(change.id).apply(store.state.curtains?.[change.id]);
     else syncAll();
     wake();
   });
@@ -351,6 +363,7 @@ export function createWorld(canvas, config, store, { onHover, onPick, onLevel = 
     if (t?.kind === 'light') return lights.get(t.id);
     if (t?.kind === 'ac') return acs.get(t.id);
     if (t?.kind === 'fan') return fans.get(t.id);
+    if (t?.kind === 'curtain') return curtains.get(t.id);
     return null;
   }
 
@@ -542,6 +555,7 @@ export function createWorld(canvas, config, store, { onHover, onPick, onLevel = 
     for (const unit of lights.values()) active = unit.update(dt) || active;
     for (const unit of acs.values()) active = unit.update(dt) || active;
     for (const unit of fans.values()) active = unit.update(dt) || active;
+    for (const unit of curtains.values()) active = unit.update(dt) || active;
     if (shadowFrames > 0 || (!active && (wallsMoved || Math.abs(rig.az - shadowAz) > 1))) {
       if (shadowFrames > 0 || wallsMoved) for (const shadow of lampShadows) shadow.needsUpdate = true;
       renderer.shadowMap.needsUpdate = true;
@@ -580,6 +594,7 @@ export function createWorld(canvas, config, store, { onHover, onPick, onLevel = 
     lights,
     acs,
     fans,
+    curtains,
 
     setInsets(top, bottom) { topInset = top; bottomInset = bottom; resize(); },
     resize,
@@ -668,6 +683,7 @@ export function createWorld(canvas, config, store, { onHover, onPick, onLevel = 
         for (const unit of lights.values()) unit.update(0.05);
         for (const unit of acs.values()) unit.update(0.05);
         for (const unit of fans.values()) unit.update(0.05);
+        for (const unit of curtains.values()) unit.update(0.05);
       }
       for (const shadow of lampShadows) shadow.needsUpdate = true;
       renderer.shadowMap.needsUpdate = true;
@@ -682,6 +698,7 @@ export function createWorld(canvas, config, store, { onHover, onPick, onLevel = 
   function levelOf(t) {
     if (t.kind === 'room') return config.rooms.find((r) => r.id === t.id)?.level;
     if (t.kind === 'fan') return fans.get(t.id)?.cfg.level;
+    if (t.kind === 'curtain') return curtains.get(t.id)?.cfg.level;
     return (t.kind === 'ac' ? acs : lights).get(t.id)?.cfg.level;
   }
 

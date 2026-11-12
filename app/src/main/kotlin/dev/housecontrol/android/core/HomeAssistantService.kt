@@ -17,8 +17,9 @@ import java.util.concurrent.TimeUnit
 /**
  * A Home Assistant server on the local network (or anywhere it is reachable), through its
  * REST API with a long-lived access token. Lights and switches become lamps, `climate`
- * entities become air conditioners and temperature sensors can stand in for an AC's room
- * reading. A WebSocket subscription tells the hub the moment something changes.
+ * entities become air conditioners, `fan` entities become fans (percentage in their own
+ * steps, preset names, oscillation and direction) and temperature sensors can stand in for
+ * an AC's room reading. A WebSocket subscription tells the hub the moment something changes.
  *
  * Everything that changes the service's own state runs on `scope` (the main thread).
  */
@@ -189,6 +190,14 @@ class HomeAssistantService(
                     }
                 }
                 "switch" -> ServiceDevice(id, name, DeviceKind.LIGHT, detail = "switch · on/off")
+                "fan" -> ServiceDevice(id, name, DeviceKind.FAN).apply {
+                    capabilities = fanCapabilities(attributes.optInt("supported_features", 0))
+                    detail = "fan · " + (capabilities.joinToString(", ").ifEmpty { "on/off" })
+                }
+                "cover" -> ServiceDevice(id, name, DeviceKind.COVER).apply {
+                    capabilities = coverCapabilities(attributes.optInt("supported_features", 0), attributes)
+                    detail = "cover · " + (capabilities.joinToString(", ").ifEmpty { "open/close" })
+                }
                 "climate" -> ServiceDevice(id, name, DeviceKind.AC).apply {
                     val lo = attributes.double("min_temp")
                     val hi = attributes.double("max_temp")
@@ -203,6 +212,30 @@ class HomeAssistantService(
             }
             device.online = state.optString("state") !in listOf("unavailable", "unknown")
             return device
+        }
+
+        /**
+         * What a Home Assistant `fan` entity can do, from its `supported_features` bits:
+         * 1 set speed (percentage), 2 oscillate, 4 direction, 8 preset mode.
+         */
+        fun fanCapabilities(flags: Int): List<String> {
+            val caps = mutableListOf<String>()
+            if (flags and 1 != 0) caps += "percentage"
+            if (flags and 2 != 0) caps += "oscillate"
+            if (flags and 4 != 0) caps += "direction"
+            if (flags and 8 != 0) caps += "preset"
+            return caps
+        }
+
+        /**
+         * What a Home Assistant `cover` entity can do: bit 4 is "set position", bit 128 "set tilt".
+         * A cover that reports `current_position` is treated as positional even if the bits lie.
+         */
+        fun coverCapabilities(flags: Int, attributes: JSONObject): List<String> {
+            val caps = mutableListOf<String>()
+            if (flags and 4 != 0 || attributes.has("current_position")) caps += "position"
+            if (flags and 128 != 0) caps += "tilt"
+            return caps
         }
 
         fun lightCapabilities(modes: List<String>): List<String> {
@@ -252,6 +285,35 @@ class HomeAssistantService(
                     }
                 }
                 reading.light = light
+            } else if (id.startsWith("fan.")) {
+                val flags = attributes.optInt("supported_features", 0)
+                val fan = jsonOf("on" to (value == "on"))
+                // Home Assistant reports the speed as a percentage; the panel keeps both, so
+                // the 3D rotor (five steps) and the entity (0…100) never disagree.
+                attributes.double("percentage")?.let { raw ->
+                    val p = raw.coerceIn(0.0, 100.0)
+                    fan.put("percent", p)
+                    fan.put("speed", if (p <= 0.0) 0.0 else (p / 20.0).coerceIn(1.0, 5.0).roundHalfAway())
+                }
+                (attributes.opt("oscillating") as? Boolean)?.let { fan.put("oscillate", it) }
+                attributes.string("direction")?.let { if (it == "forward" || it == "reverse") fan.put("direction", it) }
+                attributes.string("preset_mode")?.let {
+                    if (it.isNotEmpty() && it != "none") fan.put("preset", it)
+                }
+                reading.fan = fan
+                reading.features = jsonOf(
+                    "percentageStep" to (attributes.double("percentage_step") ?: 20.0),
+                    "presets" to attributes.optJSONArray("preset_modes").strings(),
+                    "oscillate" to (flags and 2 != 0),
+                    "direction" to (flags and 4 != 0),
+                )
+            } else if (id.startsWith("cover.")) {
+                // Home Assistant counts 0 = closed, 100 = open; the plan counts 0…1 = open.
+                val position = attributes.double("current_position")
+                val cover = jsonOf("on" to (value in listOf("open", "opening")))
+                position?.let { cover.put("open", (it / 100.0).coerceIn(0.0, 1.0)) }
+                reading.cover = cover
+                reading.features = jsonOf("position" to (attributes.has("current_position")))
             } else if (id.startsWith("climate.")) {
                 val modes = modeTable(attributes.optJSONArray("hvac_modes").strings())
                 val ac = jsonOf("on" to (value != "off"))
@@ -310,6 +372,33 @@ class HomeAssistantService(
                 }
                 if (data.length() == 0 && patch.bool("on") != true) return emptyList()
                 return listOf(call("turn_on", data))
+            }
+            if (domain == "fan") {
+                val out = mutableListOf<Call>()
+                val on = patch.bool("on")
+                if (on == false) return listOf(call("turn_off"))
+                // A percentage goes as `set_percentage`, which also switches the fan on.
+                patch.double("percent")?.let {
+                    out += call("set_percentage", jsonOf("percentage" to it.roundHalfAway().toInt().coerceIn(0, 100)))
+                }
+                patch.bool("oscillate")?.let { out += call("oscillate", jsonOf("oscillating" to it)) }
+                (patch.opt("direction") as? String)?.let { out += call("set_direction", jsonOf("direction" to it)) }
+                (patch.opt("preset") as? String)?.let { out += call("set_preset_mode", jsonOf("preset_mode" to it)) }
+                if (out.isEmpty()) {
+                    if (on != true) return emptyList()
+                    out += call("turn_on")
+                }
+                return out
+            }
+            if (domain == "cover") {
+                val on = patch.bool("on")
+                if (on == false) return listOf(call("close_cover"))
+                val target = patch.double("open")
+                if (target == null) {
+                    // No percentage asked for: a plain open/close is what the panel wanted.
+                    return if (on == true) listOf(call("open_cover")) else emptyList()
+                }
+                return listOf(call("set_cover_position", jsonOf("position" to (target.coerceIn(0.0, 1.0) * 100).roundHalfAway().toInt())))
             }
             if (domain != "climate") return emptyList()
 

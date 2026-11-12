@@ -94,7 +94,7 @@ fun DevicesScreen(model: AppModel, back: () -> Unit) {
     val current = picking
     if (current != null) {
         BackHandler { picking = null }
-        val kind = if (current.sensor) "sensor" else if (current.item.kind == DeviceKind.AC) "ac" else "light"
+        val kind = if (current.sensor) "sensor" else current.item.kind.raw
         DevicePicker(
             title = if (current.sensor) "${current.item.name} · room temperature" else current.item.name,
             kind = kind,
@@ -177,7 +177,12 @@ fun DevicesScreen(model: AppModel, back: () -> Unit) {
 @Composable
 private fun ItemRow(item: PlanEditor.Item, device: RealDevice?, onClick: () -> Unit) {
     val link = item.link
-    val icon = if (item.kind == DeviceKind.AC) R.drawable.lucide_air_vent else R.drawable.lucide_lamp_ceiling
+    val icon = when (item.kind) {
+        DeviceKind.AC -> R.drawable.lucide_air_vent
+        DeviceKind.FAN -> R.drawable.lucide_fan
+        DeviceKind.COVER -> R.drawable.lucide_blinds
+        else -> R.drawable.lucide_lamp_ceiling
+    }
     val tint = link?.let { serviceTint(it.service) } ?: Palette.faint
     val detail = when {
         link == null -> "Simulated"
@@ -201,7 +206,13 @@ private fun DevicePicker(
                 Palette.faint, onClick = { choose(null) }) { Check(current == null) }
         }
         val candidates = devices.filter { it.kind == kind }
-        if (candidates.isEmpty()) Footnote(if (kind == "sensor") "No temperature sensors on the connected platforms." else "No ${if (kind == "ac") "air conditioners" else "lights or plugs"} on the connected platforms.")
+        if (candidates.isEmpty()) Footnote(when (kind) {
+            "sensor" -> "No temperature sensors on the connected platforms."
+            "ac" -> "No air conditioners on the connected platforms."
+            "fan" -> "No fans on the connected platforms."
+            "cover" -> "No covers on the connected platforms."
+            else -> "No lights or plugs on the connected platforms."
+        })
         for ((service, list) in candidates.groupBy { it.service }) {
             Section(serviceTitle(service)) {
                 Card {
@@ -245,7 +256,12 @@ private fun AddDevicesScreen(
                 candidates.forEachIndexed { i, device ->
                     if (i > 0) RowDivider()
                     val key = "${device.service}|${device.deviceId}"
-                    ListRow(if (device.kind == "ac") R.drawable.lucide_air_vent else R.drawable.lucide_lightbulb, device.name,
+                    ListRow(when (device.kind) {
+                        "ac" -> R.drawable.lucide_air_vent
+                        "fan" -> R.drawable.lucide_fan
+                        "cover" -> R.drawable.lucide_blinds
+                        else -> R.drawable.lucide_lightbulb
+                    }, device.name,
                         listOf(serviceTitle(device.service), device.detail).filter { it.isNotEmpty() }.joinToString(" · "),
                         serviceTint(device.service), onClick = { chosen = if (key in chosen) chosen - key else chosen + key }) { Check(key in chosen) }
                 }

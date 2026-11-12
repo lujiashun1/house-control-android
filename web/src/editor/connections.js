@@ -306,12 +306,22 @@ export function createConnections({ rerender, toast, usedBy, onOpen }) {
     return `${d.name}${d.room ? ` — ${d.room}` : ''}${d.online ? '' : ' (offline)'}`;
   }
 
+  // What the picker shows for a kind. An older build may not tag a device, so the entity id is
+  // the fallback; a fan wired to a plain switch is offered as an on/off fan too.
+  const matches = (d, kind) => {
+    if (d.kind === kind) return true;
+    const id = `${d.id || ''}`;
+    if (kind === 'fan') return id.startsWith('fan.') || (id.startsWith('switch.') && /fan|风扇|風扇|ventil/i.test(`${d.name || ''} ${d.detail || ''}`));
+    if (kind === 'cover') return id.startsWith('cover.');
+    return false;
+  };
+
   function picker(kind, current, include = () => true) {
     const select = h('select');
     select.append(h('option', { value: '' }, kind === 'sensor' ? 'None — estimated' : 'Not linked — simulated'));
     let found = false;
     for (const id of offered()) {
-      const list = devicesOf(id).filter((d) => d.kind === kind && include(d));
+      const list = devicesOf(id).filter((d) => matches(d, kind) && include(d));
       if (!list.length) continue;
       select.append(h('optgroup', { label: SERVICES[id].name }, list.map((d) => {
         const value = `${d.service}|${d.id}`;
@@ -327,6 +337,14 @@ export function createConnections({ rerender, toast, usedBy, onOpen }) {
     return select;
   }
 
+  const KIND_NAMES = { light: 'light', ac: 'air conditioner', fan: 'fan', cover: 'cover', sensor: 'sensor' };
+  /** "4 lights · 2 ACs · 1 fan", to show what a platform did return when one kind is empty. */
+  const counts = (list) => {
+    const n = {};
+    for (const d of list) n[d.kind || 'light'] = (n[d.kind || 'light'] || 0) + 1;
+    return Object.entries(n).map(([k, v]) => `${v} ${KIND_NAMES[k] || k}${v === 1 ? '' : 's'}`).join(' · ') || 'none';
+  };
+
   const find = (value) => (state.devices || []).find((d) => `${d.service}|${d.id}` === value);
 
   /** The "Real device" section of a lamp or an AC. `onLinked(device)` adapts the item. */
@@ -340,6 +358,9 @@ export function createConnections({ rerender, toast, usedBy, onOpen }) {
     }
     if (!state.devices && !state.loading) setTimeout(() => load({ quiet: true }), 0);
     const select = picker(kind, current);
+    // Nothing of this kind came back: say how many devices did, instead of an empty menu.
+    const devices = state.devices || [];
+    const empty = devices.length > 0 && !devices.some((d) => matches(d, kind));
     select.addEventListener('change', () => {
       snapshot();
       const value = select.value;
@@ -370,6 +391,8 @@ export function createConnections({ rerender, toast, usedBy, onOpen }) {
       h('label.field', h('span', 'Device'), select),
       info ? h(`p.note${offline ? '.bad' : ''}`, offline ? `${info} · offline` : info) : null,
       device?.service === 'homekit' && state.info.homekit?.remote ? h('p.note', 'Switched from your iPhone; simulated on this Mac.') : null,
+      empty ? h('p.note.bad', `${devices.length} devices came back, none of them ${KIND_NAMES[kind] || kind}s (${counts(devices)}). A fan that Home Assistant shows as a switch can still be linked; one whose name does not mention a fan will not be offered.`) : null,
+      empty ? h('button.btn.wide', { onclick: () => load() }, icon('redo', 14), 'Ask the platforms again') : null,
       Object.keys(state.errors).length ? h('p.note.bad', Object.entries(state.errors).map(([s, e]) => `${SERVICES[s]?.name || s}: ${e}`).join(' · ')) : null);
   }
 

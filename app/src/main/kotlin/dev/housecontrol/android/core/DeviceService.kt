@@ -12,7 +12,8 @@ import kotlin.math.roundToInt
  * A smart home platform the plan's lamps and ACs can be linked to, besides Smart Life:
  * Home Assistant and Philips Hue. Each one speaks the panel's own vocabulary — a light is
  * `on` / `brightness` 0…1 / `temp` in kelvin / `color` "#rrggbb", an AC is `on` / `target` /
- * `mode` / `fan` / … — so the hub and the UI never see what is underneath.
+ * `mode` / `fan` / …, a fan is `on` / `percent` 0…100 / `preset` / `direction` /
+ * `oscillate` — so the hub and the UI never see what is underneath.
  */
 interface DeviceService {
     /** "homeassistant", "hue": what a plan's `link.service` says. */
@@ -43,7 +44,7 @@ interface DeviceService {
 }
 
 enum class DeviceKind(val raw: String) {
-    LIGHT("light"), AC("ac"), SENSOR("sensor");
+    LIGHT("light"), AC("ac"), FAN("fan"), COVER("cover"), SENSOR("sensor");
 
     companion object {
         fun of(raw: String?) = entries.firstOrNull { it.raw == raw }
@@ -68,7 +69,8 @@ data class ServiceDevice(
     val kind: DeviceKind,
     var room: String? = null,
     var online: Boolean = true,
-    /** For lights: which of "brightness", "temp", "color" it supports. */
+    /** For lights: which of "brightness", "temp", "color" it supports. For fans: "percentage",
+     *  "oscillate", "direction", "preset". For covers: "position" (it takes a percentage). */
     var capabilities: List<String> = emptyList(),
     /** For ACs: the set-point range it accepts. */
     var range: Pair<Double, Double>? = null,
@@ -88,6 +90,9 @@ data class ServiceDevice(
 data class DeviceReading(
     var light: JSONObject? = null,
     var ac: JSONObject? = null,
+    var fan: JSONObject? = null,
+    /** What a curtain reports: `open` 0…1 and `on`. */
+    var cover: JSONObject? = null,
     /** What an AC can do: `modes`, `fans`, `swing`, `sleep`, `eco` (see the store's acFeatures). */
     var features: JSONObject? = null,
     /** A temperature sensor's reading in °C. */

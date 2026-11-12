@@ -15,6 +15,10 @@ const FAN_GREEN = '#4ee79b';
 const FAN_SPEED_LABEL = ['Off', 'Quiet', 'Low', 'Medium', 'High', 'Turbo'];
 const FAN_GRADIENT = 'linear-gradient(90deg, #1f7a52 0%, #4ee79b 60%, #a7ffd3 100%)';
 const SWATCHES = ['#ff5a4f', '#ff9a3c', '#ffd84a', '#5fe08a', '#42d6e8', '#4f8dff', '#8b5cff', '#ff5fc4'];
+// Curtain fabrics: linen, off-white, sand, sage, dusty blue, clay, slate, charcoal.
+const CLOTH_SWATCHES = ['#e8e2d6', '#f6f3ec', '#cbb9a0', '#a9b3a5', '#8f9bb0', '#b98d7e', '#6f7684', '#3f4654'];
+const CURTAIN_GRADIENT = 'linear-gradient(90deg, #2a3038 0%, #6b6f7a 48%, #efe7d8 100%)';
+const SHEER_GRADIENT = 'linear-gradient(90deg, rgba(255,255,255,.12) 0%, rgba(255,255,255,.5) 50%, #ffffff 100%)';
 
 const TEMP_GRADIENT = 'linear-gradient(90deg, #2f7df6 0%, #58b4f5 34%, #f3e2c0 62%, #f6a54a 82%, #f0762c 100%)';
 const DIM_GRADIENT = 'linear-gradient(90deg, #4a4f5e 0%, #b9a98c 45%, #ffe2b0 100%)';
@@ -34,9 +38,22 @@ function fanLevel(s) {
   return s.on ? Math.max(1, Math.min(5, s.speed)) : 0;
 }
 
+// "35% open · 62% sheer": how much light the cloth lets through is the sheer figure.
+function curtainStatus(s) {
+  return `${Math.round(s.open * 100)}% open · ${Math.round(s.opacity * 100)}% sheer`;
+}
+
+// A percentage the entity's own step can reach (percentage_step 20 → 20, 40, 60, 80, 100).
+function snapPercent(value, step) {
+  const v = clamp(Math.round(value), 1, 100);
+  return Math.max(step, Math.round(v / step) * step);
+}
+
 function fanStatus(s) {
   if (!s.on) return 'Off';
-  return `${FAN_SPEED_LABEL[Math.max(1, Math.min(5, s.speed))]}${s.oscillate ? ' · sweeping' : ''}`;
+  const pct = Math.round(s.percent ?? Math.max(1, s.speed) * 20);
+  const preset = s.preset ? `${s.preset} · ` : '';
+  return `${preset}${pct}%${s.oscillate ? ' · sweeping' : ''}${s.direction === 'reverse' ? ' · reverse' : ''}`;
 }
 
 function acTemperatureColor(target, cfg) {
@@ -322,7 +339,29 @@ export function createPanel(root, config, store, { onFocus, onMenu }) {
     };
   }
 
+  // A curtain has no power of its own: the tile wears the cloth's colour and shows how far
+  // it is drawn, and opening it is what the tap on the cloth does.
+  function curtainTile(cfg) {
+    const sub = h('div.tile-sub');
+    const el = h('div.tile.curtain.on', { role: 'button', tabindex: 0, 'aria-label': cfg.name, onclick: () => openSheet({ kind: 'curtain', id: cfg.id }) },
+      h('div.bubble', icon('blinds', 19)),
+      h('div.tile-text', h('div.tile-name', cfg.name), sub),
+      h('div.tile-level'));
+    el.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') openSheet({ kind: 'curtain', id: cfg.id }); });
+    return {
+      el, cfg, kind: 'curtain',
+      update() {
+        const c = state.curtains[cfg.id];
+        el.style.setProperty('--c', c.color);
+        el.style.setProperty('--level', String(c.open));
+        sub.textContent = ui.room === 'all' && !isPhone
+          ? `${curtainStatus(c)} · ${roomName.get(cfg.room)}` : curtainStatus(c);
+      },
+    };
+  }
+
   for (const cfg of config.acs) tiles.set(cfg.id, acTile(cfg));
+  for (const cfg of config.curtains || []) tiles.set(cfg.id, curtainTile(cfg));
   for (const cfg of config.fans || []) tiles.set(cfg.id, fanTile(cfg));
   for (const cfg of config.lights) tiles.set(cfg.id, lightTile(cfg));
 
@@ -347,6 +386,7 @@ export function createPanel(root, config, store, { onFocus, onMenu }) {
         if (ui.room === 'all') nodes.push(h('div.group-label', room.name));
         devices.filter((t) => t.kind === 'ac').forEach(add);
         devices.filter((t) => t.kind === 'fan').forEach(add);
+        devices.filter((t) => t.kind === 'curtain').forEach(add);
         devices.filter((t) => t.kind === 'light').forEach(add);
       }
       if (multiLevel && ui.room === 'all' && nodes.length > before) nodes.splice(before, 0, h('div.level-label', level.name));
@@ -366,7 +406,8 @@ export function createPanel(root, config, store, { onFocus, onMenu }) {
   function openSheet(target) {
     ui.sheet = target;
     sheetView = target.kind === 'ac' ? acSheet(target.id)
-      : target.kind === 'fan' ? fanSheet(target.id) : lightSheet(target.id);
+      : target.kind === 'fan' ? fanSheet(target.id)
+        : target.kind === 'curtain' ? curtainSheet(target.id) : lightSheet(target.id);
     sheet.replaceChildren(...sheetView.nodes);
     panel.classList.add('hidden');
     sheet.classList.remove('hidden');
@@ -374,7 +415,8 @@ export function createPanel(root, config, store, { onFocus, onMenu }) {
     sheet.inert = false;
     card.classList.add('detail');
     hideTooltip();
-    onFocus(target.kind === 'ac' || target.kind === 'fan' ? target : { kind: 'room', id: store.lightCfg.get(target.id).room });
+    onFocus(target.kind === 'ac' || target.kind === 'fan' || target.kind === 'curtain'
+      ? target : { kind: 'room', id: store.lightCfg.get(target.id).room });
     update();
   }
 
@@ -499,20 +541,30 @@ export function createPanel(root, config, store, { onFocus, onMenu }) {
     };
   }
 
+  // The sheet offers what a Home Assistant `fan` entity offers: a percentage in steps of its
+  // own `percentage_step`, its preset names, oscillation and the direction it turns.
   function fanSheet(id) {
     const cfg = store.fanCfg.get(id);
     const s = () => state.fans[id];
     const set = (patch) => store.setFan(id, patch);
+    const feat = () => store.fanFeatures(id);
     const sub = h('div.sheet-sub');
     const powerBtn = h('button.round.power', { 'aria-label': 'Power', onclick: () => { haptic('medium'); set({ on: !s().on }); } }, icon('power', 21, 2.2));
-    const big = bigNumber('/ 5');
+    const big = bigNumber('%');
+    const step = () => Math.max(1, Math.min(100, Math.round(feat().percentageStep || 20)));
     const slider = createSlider({
-      min: 1, max: 5, step: 1, value: Math.max(1, s().speed), gradient: FAN_GRADIENT, labels: ['1', '5'],
-      onInput: (v) => set({ on: true, speed: v }),
+      min: 1, max: 100, step: 1, value: Math.max(1, s().percent ?? 20), gradient: FAN_GRADIENT,
+      labels: ['1', '100'], detent: step(),
+      onInput: (v) => set({ on: true, percent: snapPercent(v, step()) }),
     });
     const osc = h('button.toggle-chip', {
       onclick: () => { haptic('light'); set({ oscillate: !s().oscillate }); },
     }, icon('rotate', 17), 'Oscillate', h('span.switch'));
+    const reverse = h('button.toggle-chip', {
+      onclick: () => { haptic('light'); set({ direction: s().direction === 'reverse' ? 'forward' : 'reverse' }); },
+    }, icon('undo', 17, 2), h('span.dir'), h('span.switch'));
+    const presets = h('div.options');
+    const noteText = h('span');
     const live = h('span.live');
 
     return {
@@ -520,12 +572,12 @@ export function createPanel(root, config, store, { onFocus, onMenu }) {
         sheetHead(cfg.name, sub, powerBtn),
         h('div.readout', big.el),
         h('div.slider-row',
-          h('button.round', { 'aria-label': 'Slower', onclick: () => { haptic('tick'); set({ on: true, speed: Math.max(1, s().speed - 1) }); } }, icon('minus', 18, 2.2)),
+          h('button.round', { 'aria-label': 'Slower', onclick: () => { haptic('tick'); set({ on: true, percent: Math.max(step(), snapPercent(s().percent - step(), step())) }); } }, icon('minus', 18, 2.2)),
           slider.el,
-          h('button.round', { 'aria-label': 'Faster', onclick: () => { haptic('tick'); set({ on: true, speed: Math.min(5, s().speed + 1) }); } }, icon('plus', 18, 2.2))),
-        h('div.options', osc),
-        h('div.sheet-note', icon('fan', 20),
-          `${roomName.get(cfg.room)} · sweeping ${cfg.sweep}° each way, about 7 seconds from side to side.`),
+          h('button.round', { 'aria-label': 'Faster', onclick: () => { haptic('tick'); set({ on: true, percent: Math.min(100, snapPercent(s().percent + step(), step())) }); } }, icon('plus', 18, 2.2))),
+        presets,
+        h('div.options', osc, reverse),
+        h('div.sheet-note', icon('fan', 20), noteText),
       ],
       update() {
         const f = s();
@@ -533,10 +585,88 @@ export function createPanel(root, config, store, { onFocus, onMenu }) {
         sub.replaceChildren(live, h('b', FAN_SPEED_LABEL[fanLevel(f)]));
         live.style.background = f.on ? FAN_GREEN : 'rgba(255,255,255,.25)';
         live.style.boxShadow = f.on ? `0 0 8px ${FAN_GREEN}` : 'none';
-        big.set(fanLevel(f), !f.on);
-        slider.set(Math.max(1, fanLevel(f) || 1));
+        big.set(Math.round(f.percent ?? fanLevel(f) * 20), !f.on);
+        slider.set(Math.max(1, Math.round(f.percent ?? 20)));
         osc.classList.toggle('on', f.oscillate);
         osc.classList.toggle('active', f.oscillate);
+        const canReverse = feat().direction !== false;
+        reverse.classList.toggle('hidden', !canReverse);
+        reverse.classList.toggle('on', f.direction === 'reverse');
+        reverse.classList.toggle('active', f.direction === 'reverse');
+        reverse.querySelector('.dir').textContent = f.direction === 'reverse' ? 'Reverse' : 'Forward';
+        const names = feat().presets || [];
+        const key = names.join('|');
+        if (presets.dataset.key !== key) {
+          presets.dataset.key = key;
+          presets.replaceChildren(...names.map((name) => h('button.toggle-chip.preset', {
+            onclick: () => { haptic('light'); set({ preset: s().preset === name ? null : name }); },
+          }, name)));
+          presets.classList.toggle('hidden', !names.length);
+        }
+        for (const chip of presets.children) chip.classList.toggle('active', chip.textContent === f.preset);
+        const link = cfg.link?.service
+          ? ` · ${cfg.link.service === 'homeassistant' ? 'Home Assistant' : cfg.link.service} ${cfg.link.id}` : '';
+        noteText.textContent = `${roomName.get(cfg.room)} · ${Math.round(100 / step())} speed steps, sweeping ${cfg.sweep}°${link}`;
+      },
+    };
+  }
+
+  function curtainSheet(id) {
+    const cfg = store.curtainCfg.get(id);
+    const s = () => state.curtains[id];
+    const set = (patch) => store.setCurtain(id, patch);
+    const sub = h('div.sheet-sub');
+    const big = bigNumber('%');
+    const open = createSlider({
+      min: 0, max: 100, step: 1, value: Math.round(s().open * 100), gradient: CURTAIN_GRADIENT,
+      labels: ['Closed', 'Open'], detent: 5,
+      onInput: (v) => set({ open: v / 100 }),
+    });
+    const sheerValue = h('span');
+    const sheer = createSlider({
+      min: 10, max: 100, step: 1, value: Math.round(s().opacity * 100), gradient: SHEER_GRADIENT,
+      compact: true, detent: 5,
+      onInput: (v) => set({ opacity: v / 100 }),
+    });
+    const colorLabel = h('span');
+    const pad = createColorPad({ value: s().color, onInput: (c) => set({ color: c }) });
+    const swatches = CLOTH_SWATCHES.map((c) => h('button.swatch', {
+      'aria-label': `Fabric ${c}`, vars: { '--sw': c }, onclick: () => { haptic('light'); set({ color: c }); },
+    }));
+    const live = h('span.live');
+    const noteText = h('span');
+
+    return {
+      nodes: [
+        sheetHead(cfg.name, sub, null),
+        h('div.readout', big.el),
+        h('div.slider-row',
+          h('button.round', { 'aria-label': 'Close a little', onclick: () => { haptic('tick'); set({ open: Math.max(0, s().open - 0.1) }); } }, icon('minus', 18, 2.2)),
+          open.el,
+          h('button.round', { 'aria-label': 'Open a little', onclick: () => { haptic('tick'); set({ open: Math.min(1, s().open + 0.1) }); } }, icon('plus', 18, 2.2))),
+        h('div.field-label', h('span', 'Sheer'), sheerValue),
+        h('div.slider-row', sheer.el),
+        h('div.field-label', h('span', 'Fabric colour'), colorLabel),
+        pad.el,
+        h('div.swatches', swatches),
+        h('div.sheet-note', icon('blinds', 20), noteText),
+      ],
+      update() {
+        const c = s();
+        sub.replaceChildren(live, h('b', `${Math.round(c.open * 100)}% open`));
+        live.style.background = c.color;
+        live.style.boxShadow = `0 0 8px ${c.color}`;
+        big.set(Math.round(c.open * 100), false);
+        open.set(Math.round(c.open * 100));
+        sheer.set(Math.round(c.opacity * 100));
+        sheerValue.textContent = `${Math.round(c.opacity * 100)}%`;
+        colorLabel.textContent = c.color.toUpperCase();
+        swatches.forEach((el, i) => el.classList.toggle('selected', c.color.toLowerCase() === CLOTH_SWATCHES[i]));
+        pad.set(c.color);
+        // A linked curtain follows a Home Assistant `cover`: say which one, and say when it is not.
+        noteText.textContent = cfg.link
+          ? `${roomName.get(cfg.room)} · ${cfg.link.service} ${cfg.link.id} · position only, colour and sheer are yours`
+          : `${roomName.get(cfg.room)} · simulated: no platform, nothing is sent`;
       },
     };
   }
@@ -615,6 +745,10 @@ export function createPanel(root, config, store, { onFocus, onMenu }) {
       const cfg = store.lightCfg.get(hit.id);
       const s = state.lights[hit.id];
       name = cfg.name; status = lightStatus(cfg, s); on = s.on; color = css(lightColor(s, tmp));
+    } else if (hit.kind === 'curtain') {
+      const cfg = store.curtainCfg.get(hit.id);
+      const s = state.curtains[hit.id];
+      name = cfg.name; status = curtainStatus(s); on = true; color = s.color;
     } else if (hit.kind === 'fan') {
       const cfg = store.fanCfg.get(hit.id);
       const s = state.fans[hit.id];
@@ -635,6 +769,11 @@ export function createPanel(root, config, store, { onFocus, onMenu }) {
   /* ---------- derived state ---------- */
 
   function mood() {
+    // A curtain's sheet is lit in the colour of the cloth on it.
+    if (ui.sheet?.kind === 'curtain') {
+      const c = state.curtains[ui.sheet.id];
+      return new THREE.Color(c.color).multiplyScalar(0.10 + 0.10 * c.open);
+    }
     // A fan's sheet is lit in the colour of its own airflow.
     if (ui.sheet?.kind === 'fan') {
       const f = state.fans[ui.sheet.id];

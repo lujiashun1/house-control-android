@@ -19,8 +19,8 @@ const sv = (tag, attrs = {}, ...kids) => {
   return el;
 };
 
-const KEYS = { room: 'rooms', light: 'lights', ac: 'acs', fan: 'fans', furniture: 'furniture', opening: 'openings', scene: 'scenes' };
-const TITLES = { room: 'Rooms', light: 'Lights', ac: 'Air conditioners', fan: 'Fans', furniture: 'Furniture', opening: 'Doors & windows', scene: 'Scenes' };
+const KEYS = { room: 'rooms', light: 'lights', ac: 'acs', fan: 'fans', curtain: 'curtains', furniture: 'furniture', opening: 'openings', scene: 'scenes' };
+const TITLES = { room: 'Rooms', light: 'Lights', ac: 'Air conditioners', fan: 'Fans', curtain: 'Curtains', furniture: 'Furniture', opening: 'Doors & windows', scene: 'Scenes' };
 const FLOOR_FILL = { oak: '#4a3d2e', walnut: '#3c2f28', tile: '#39424b', stone: '#30353c' };
 const WALLS = ['north', 'east', 'south', 'west'];
 const LEVEL_NAMES = ['Ground floor', 'First floor', 'Second floor', 'Third floor', 'Fourth floor', 'Fifth floor'];
@@ -169,7 +169,7 @@ export async function bootEditor(root) {
   const levelRooms = (id = level) => doc.rooms.filter((r) => (r.level ?? firstLevel()) === id);
   // The floor an item is on; null for a scene, which is for the whole home.
   function levelOf(kind, item) {
-    if (kind === 'light' || kind === 'ac' || kind === 'fan') return roomLevel(item.room);
+    if (kind === 'light' || kind === 'ac' || kind === 'fan' || kind === 'curtain') return roomLevel(item.room);
     if (kind === 'room' || kind === 'furniture' || kind === 'opening') return item.level ?? firstLevel();
     return null;
   }
@@ -413,6 +413,7 @@ export async function bootEditor(root) {
       ['light', 'bulb', 'Lamp', () => add('light')],
       ['ac', 'ac', 'Air conditioner', () => add('ac')],
       ['fan', 'fan', 'Fan', () => add('fan')],
+      ['curtain', 'blinds', 'Curtain', () => add('curtain')],
       ['door', 'opening', 'Door', () => add('opening', { type: 'door' })],
       ['window', 'window', 'Window', () => add('opening', { type: 'window' })],
       ['stairs', 'stairs', 'Stairs', () => add('furniture', { type: 'stairs' })],
@@ -435,7 +436,7 @@ export async function bootEditor(root) {
       const linked = [...doc.lights, ...doc.acs].filter(isLinked).length;
       status.className = 'status';
       const floors = levelList().length > 1 ? `${levelList().length} floors · ` : '';
-      status.replaceChildren(h('span.ok', '●'), ` ${floors}${doc.rooms.length} rooms · ${doc.lights.length} lights · ${doc.acs.length} ACs · ${doc.fans.length} fans · `,
+      status.replaceChildren(h('span.ok', '●'), ` ${floors}${doc.rooms.length} rooms · ${doc.lights.length} lights · ${doc.acs.length} ACs · ${doc.fans.length} fans · ${doc.curtains.length} curtains · `,
         `${linked} linked to real devices`, dirty ? h('span.dirty', ' · unsaved changes') : '');
     } catch (e) {
       valid = null;
@@ -447,11 +448,12 @@ export async function bootEditor(root) {
   }
 
   function previewStore(cfg) {
-    const state = { lights: {}, acs: {}, fans: {} };
+    const state = { lights: {}, acs: {}, fans: {}, curtains: {} };
     for (const l of cfg.lights) state.lights[l.id] = { on: previewLights, brightness: 0.85, temp: 3200, color: l.color || null };
     for (const a of cfg.acs) state.acs[a.id] = { on: previewLights, mode: 'cool', fan: 'auto', swing: 'swing', sleep: false, target: 23 };
     // The fans run in the preview while the lights are on, so their airflow can be judged.
     for (const f of cfg.fans || []) state.fans[f.id] = { on: previewLights, speed: 3, oscillate: true };
+    for (const c of cfg.curtains || []) state.curtains[c.id] = { open: previewLights ? 0.55 : 0.15, color: c.color, opacity: c.opacity };
     return { state, on: () => () => {} };
   }
 
@@ -495,6 +497,7 @@ export async function bootEditor(root) {
     if (kind === 'light') return [item.name || item.id, `${roomName(item.room)} · ${item.type}`];
     if (kind === 'ac') return [item.name || item.id, `${roomName(item.room)} · ${item.wall} wall`];
     if (kind === 'fan') return [item.name || item.id, `${roomName(item.room)} · ${fix(item.height ?? 0.95)} m`];
+    if (kind === 'curtain') return [item.name || item.id, `${roomName(item.room)} · ${item.wall} · ${fix(item.width ?? 2)} m`];
     if (kind === 'furniture') return [item.type, roomName(roomAt(item.pos)?.id) || '—'];
     if (kind === 'opening' && !item.to) return [item.type || 'door', ''];
     if (kind === 'opening') return [item.type || 'door', `${fix(Math.hypot(item.to[0] - item.from[0], item.to[1] - item.from[1]))} m`];
@@ -541,7 +544,7 @@ export async function bootEditor(root) {
   }
 
   function uniqueId(base) {
-    const ids = new Set([...doc.rooms, ...doc.lights, ...doc.acs, ...doc.fans, ...doc.scenes].map((x) => x.id));
+    const ids = new Set([...doc.rooms, ...doc.lights, ...doc.acs, ...doc.fans, ...doc.curtains, ...doc.scenes].map((x) => x.id));
     if (!ids.has(base)) return base;
     for (let i = 2; ; i++) if (!ids.has(`${base}${i}`)) return `${base}${i}`;
   }
@@ -568,6 +571,15 @@ export async function bootEditor(root) {
     } else if (kind === 'fan') {
       if (!room) return toast('Add a room first', true);
       list.push({ id: uniqueId(`${room.id}.fan`), name: `${room.name} fan`, room: room.id, pos: freeSpot(room, center), rot: 0, height: 0.95, sweep: 45 });
+    } else if (kind === 'curtain') {
+      if (!room) return toast('Add a room first', true);
+      // A window-wide set on the far wall of the room, where the 3D view shows it.
+      const [rx, rz, rw, rd] = room.rect;
+      list.push({
+        id: uniqueId(`${room.id}.curtain`), name: `${room.name} curtain`, room: room.id, wall: 'north',
+        pos: [fix(rx + rw / 2), fix(rz)], width: fix(Math.min(2.4, Math.max(1, rw * 0.55))), height: 2.2, top: 2.35,
+        open: 0.3, color: '#e8e2d6', opacity: 0.62,
+      });
     } else if (kind === 'furniture') {
       list.push(stamp(type === 'stairs' ? { type, pos: center, rot: 0, width: 1, depth: 2.8 } : { type: type || 'sofa', pos: center, rot: 0 }));
     } else if (kind === 'opening') {
@@ -603,10 +615,14 @@ export async function bootEditor(root) {
       copy.id = uniqueId(item.id);
       copy.name = `${item.name || item.id} 2`;
       copy.rect[0] = fix(item.rect[0] + item.rect[2]);
-    } else if (kind === 'light' || kind === 'ac' || kind === 'fan') {
+    } else if (kind === 'light' || kind === 'ac' || kind === 'fan' || kind === 'curtain') {
       copy.id = uniqueId(item.id);
       for (const key of ['tuya', 'link', 'sensor']) delete copy[key];
       if (kind === 'fan') copy.pos = [fix(item.pos[0] + 0.6), fix(item.pos[1] + 0.6)];
+      else if (kind === 'curtain') {
+        const alongX = item.wall === 'north' || item.wall === 'south';
+        copy.pos = alongX ? [fix(item.pos[0] + (item.width ?? 2) / 2), item.pos[1]] : [item.pos[0], fix(item.pos[1] + (item.width ?? 2) / 2)];
+      }
       else if (kind === 'ac') {
         const along = item.wall === 'north' || item.wall === 'south' ? 0 : 1;
         copy.pos[along] = fix(copy.pos[along] + 1.1);
@@ -701,7 +717,7 @@ export async function bootEditor(root) {
     snapshot();
     const [gone] = doc[KEYS[kind]].splice(index, 1);
     if (kind === 'room') dropRooms(new Set([gone.id]));
-    else if (kind === 'light' || kind === 'ac' || kind === 'fan') forgetDevices();
+    else if (kind === 'light' || kind === 'ac' || kind === 'fan' || kind === 'curtain') forgetDevices();
     sel = { kind: 'home' };
     touch();
   }
@@ -712,6 +728,7 @@ export async function bootEditor(root) {
     doc.lights = doc.lights.filter((l) => !ids.has(l.room));
     doc.acs = doc.acs.filter((a) => !ids.has(a.room));
     doc.fans = doc.fans.filter((f) => !ids.has(f.room));
+    doc.curtains = doc.curtains.filter((c) => !ids.has(c.room));
     forgetDevices();
   }
 
@@ -814,6 +831,21 @@ export async function bootEditor(root) {
       }, big ? sv('rect', { x: -0.62, y: -0.12, width: 1.24, height: 0.74, class: 'hit' }) : null,
         sv('rect', { x: -0.47, y: 0.08, width: 0.94, height: 0.24, rx: 0.07 }),
         sv('path', { d: 'M-0.3 0.42v0.22M0 0.42v0.3M0.3 0.42v0.22', class: 'flow' })));
+    });
+
+    // A curtain, seen from above: the rod on the wall and two panels of cloth hanging off it.
+    doc.curtains.forEach((c, i) => {
+      if (!here('curtain', c)) return;
+      const rot = { north: 0, east: 90, south: 180, west: 270 }[c.wall] || 0;
+      const a = (c.width ?? 2) / 2;
+      kids.push(sv('g', {
+        class: `p-curtain${isSel('curtain', i) ? ' sel' : ''}`, 'data-kind': 'curtain', 'data-index': i,
+        transform: `translate(${c.pos[0]} ${c.pos[1]}) rotate(${rot})`,
+      }, big ? sv('rect', { x: -a - 0.1, y: -0.12, width: a * 2 + 0.2, height: 0.62, class: 'hit' }) : null,
+        sv('line', { x1: -a, y1: 0, x2: a, y2: 0, class: 'rod' }),
+        sv('path', { d: `M${-a} 0Q${-a / 2} 0.2 0 0`, class: 'cloth' }),
+        sv('path', { d: `M0 0Q${a / 2} 0.2 ${a} 0`, class: 'cloth' }),
+        sv('path', { d: `M${-a} 0Q${-a / 2} 0.09 0 0Q${a / 2} 0.09 ${a} 0`, class: 'sheer' })));
     });
 
     // A pedestal fan, seen from above: the guard, three blades, and the arc where the air leaves.
@@ -1002,6 +1034,7 @@ export async function bootEditor(root) {
         ...doc.lights.filter((l) => l.room === item.id).map((o) => ({ o, pos: [...o.pos] })),
         ...doc.acs.filter((a) => a.room === item.id).map((o) => ({ o, pos: [...o.pos] })),
         ...doc.fans.filter((f) => f.room === item.id).map((o) => ({ o, pos: [...o.pos] })),
+        ...doc.curtains.filter((c) => c.room === item.id).map((o) => ({ o, pos: [...o.pos] })),
         ...doc.furniture.filter((f) => Array.isArray(f.pos) && here('furniture', f) && inside(f.pos)).map((o) => ({ o, pos: [...o.pos] })),
       ];
       drag.openings = doc.openings.filter((o) => here('opening', o) && inside(o.from) && inside(o.to)).map((o) => ({ o, from: [...o.from], to: [...o.to] }));
@@ -1093,6 +1126,8 @@ export async function bootEditor(root) {
       } else placeOpening(item, mid, len); // doors and windows slide along the walls, and jump to the nearest one
     } else if (drag.kind === 'ac') {
       snapAC(doc.acs[drag.index], [px, pz]);
+    } else if (drag.kind === 'curtain') {
+      snapAC(doc.curtains[drag.index], [px, pz]);   // same rule: it hangs on a wall of its room
     } else {
       const item = doc[KEYS[drag.kind]][drag.index];
       item.pos = [fix(drag.pos[0] + dx), fix(drag.pos[1] + dz)];
@@ -1341,7 +1376,10 @@ export async function bootEditor(root) {
         h('div.fields',
           h('button.btn', { onclick: () => rotate(90) }, icon('rotateCw', 14, 2.2), 'Turn 90°'),
           h('button.btn', { onclick: duplicate }, icon('duplicate', 14, 2.2), 'Duplicate')),
-        h('p.note', 'Speed and sweep are set on the fan itself, in the control panel. The fan is simulated, not linked to a smart plug, so it needs no connection.')));
+        h('p.note', 'Speed and sweep are set on the fan itself, in the control panel.')),
+      // A fan can be driven by a Home Assistant `fan` entity: percentage, presets, oscillation
+      // and reverse all come from that entity, the way they do for a lamp.
+      links.deviceSection(item, 'fan', linkHooks));
     } else if (kind === 'furniture') {
       const stairs = item.type === 'stairs';
       head(stairs ? 'Stairs' : item.type, stairs ? 'Up to the floor above' : 'Decoration only');
@@ -1356,6 +1394,26 @@ export async function bootEditor(root) {
           h('button.btn', { onclick: duplicate }, icon('duplicate', 14, 2.2), 'Duplicate')),
         h('p.note', stairs ? 'Stairs climb in the direction of the arrow and reach the floor above; the floor above shows them faintly, to line its landing up.'
           : 'The short line on the plan marks the front. Rotation 0° faces south (towards the bottom of the plan).')));
+    } else if (kind === 'curtain') {
+      head(item.name || item.id, `id: ${item.id}`);
+      nodes.push(section('Curtain',
+        bind('Name', text(), prop(item, 'name', '')),
+        row(bind('Room', choice(doc.rooms.map((r) => [r.id, r.name || r.id])), { ...prop(item, 'room'), event: 'change' }),
+          bind('Hangs on wall', choice(WALLS), { ...prop(item, 'wall', 'north'), event: 'change' }))),
+      section('Size, m',
+        row(bind('Width', number(0.1), { ...prop(item, 'width', 2), parse: parseNum }),
+          bind('Drop', number(0.1), { ...prop(item, 'height', 2.2), parse: parseNum })),
+        row(bind('Rod height', number(0.1), { ...prop(item, 'top', 2.35), parse: parseNum }),
+          bind('Open at start, 0-1', number(0.05), { ...prop(item, 'open', 0.3), parse: parseNum })),
+        h('p.note', 'Left empty, the rod sits at 2.35 m and the cloth is 2.2 m long. Drag the set on the plan and it snaps to the nearest wall of its room.')),
+      section('Cloth',
+        row(bind('Colour', text(), prop(item, 'color', '#e8e2d6')),
+          bind('Sheer, 0-1', number(0.05), { ...prop(item, 'opacity', 0.62), parse: parseNum })),
+        h('p.note', 'These are the starting values: how far it is drawn, its colour and how sheer it is are all changeable from the control panel while the home runs.')),
+      h('div.fields',
+        h('button.btn', { onclick: duplicate }, icon('duplicate', 14, 2.2), 'Duplicate')),
+      // A curtain is a Home Assistant `cover`: position goes out, position comes back.
+      links.deviceSection(item, 'cover', linkHooks));
     } else if (kind === 'opening') {
       head(item.type || 'door', 'A gap or a window in a wall');
       nodes.push(section('Opening',
@@ -1805,7 +1863,7 @@ export async function bootEditor(root) {
       const [px, pz] = planPoint(ev);
       const inRoom = room && px >= room.rect[0] && px <= room.rect[0] + room.rect[2] && pz >= room.rect[1] && pz <= room.rect[1] + room.rect[3];
       const handle = kind === 'resize' || kind === 'oend';
-      if (handle || (kind && kind !== 'none' && isSel(kind, index)) || (inRoom && kind !== 'light' && kind !== 'ac' && kind !== 'fan')) {
+      if (handle || (kind && kind !== 'none' && isSel(kind, index)) || (inRoom && kind !== 'light' && kind !== 'ac' && kind !== 'fan' && kind !== 'curtain')) {
         const what = handle || isSel(kind, index) ? [kind, index] : ['room', sel.index];
         // The view holds still while something is dragged past the plan's edge.
         if (!view) view = fitBox();

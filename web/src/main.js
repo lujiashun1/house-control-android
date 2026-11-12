@@ -87,7 +87,7 @@ async function boot() {
         if (!target) return;
         if (target.kind === 'light') { haptic('light'); store.toggleLight(target.id); }
         else if (target.kind === 'ac') panel.openSheet(target);
-        else if (target.kind === 'fan') { haptic('light'); panel.openSheet(target); }
+        else if (target.kind === 'fan' || target.kind === 'curtain') { haptic('light'); panel.openSheet(target); }
         else if (target.kind === 'room') panel.selectRoom(target.id);
       },
     });
@@ -146,6 +146,7 @@ async function boot() {
   incoming.openDevice = (id) => {
     if (store.acCfg.has(id)) panel.openSheet({ kind: 'ac', id });
     else if (store.fanCfg.has(id)) panel.openSheet({ kind: 'fan', id });
+    else if (store.curtainCfg.has(id)) panel.openSheet({ kind: 'curtain', id });
     else if (store.lightCfg.has(id)) panel.openSheet({ kind: 'light', id });
     else if (config.rooms.some((r) => r.id === id)) { panel.closeSheet(); panel.selectRoom(id); }
   };
@@ -225,6 +226,7 @@ async function boot() {
 
   const opened = window.__HOUSE_BOOT__?.openDevice || new URLSearchParams(location.search).get('device');
   if (store.acCfg.has(opened)) panel.openSheet({ kind: 'ac', id: opened });
+  else if (store.curtainCfg.has(opened)) panel.openSheet({ kind: 'curtain', id: opened });
   else if (store.lightCfg.has(opened)) panel.openSheet({ kind: 'light', id: opened });
 
   if (!isNative) show();

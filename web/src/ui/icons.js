@@ -8,6 +8,7 @@ import {
   HouseWifi, Smartphone, Radar, CircleCheck, CircleAlert, ChevronRight, Unlink, LoaderCircle, Router,
   List, Trash2, Scan, Redo2, Map as MapIcon, DoorClosed, Armchair,
   Layers, ChevronsUp, RotateCw, ZoomIn, ZoomOut, SquareSplitHorizontal, CopyPlus, AppWindow, SquareDashed,
+  Blinds,
 } from 'lucide';
 
 const ICONS = {
@@ -25,7 +26,7 @@ const ICONS = {
   next: ChevronRight, unlink: Unlink, spinner: LoaderCircle, bridge: Router, bulb: Lightbulb,
   list: List, trash: Trash2, fit: Scan, redo: Redo2, map: MapIcon, opening: DoorClosed, furniture: Armchair,
   layers: Layers, stairs: ChevronsUp, rotateCw: RotateCw, zoomIn: ZoomIn, zoomOut: ZoomOut,
-  split: SquareSplitHorizontal, duplicate: CopyPlus, window: AppWindow, room: SquareDashed,
+  split: SquareSplitHorizontal, duplicate: CopyPlus, window: AppWindow, room: SquareDashed, blinds: Blinds,
 };
 
 export function icon(name, size = 18, stroke = 1.8) {

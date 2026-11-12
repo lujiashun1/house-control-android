@@ -122,6 +122,15 @@ html.mode-editor, html.mode-editor body { user-select: none; }
 .p-light.sel circle:not(.halo), .p-light.sel rect { stroke: #fff; stroke-width: 0.08; }
 .p-light.sel .halo { fill: rgba(255, 255, 255, 0.2); }
 
+/* A curtain seen from above: the rod on the wall, two panels of cloth hanging off it. */
+.p-curtain { cursor: move; }
+.p-curtain .rod { stroke: #d9d2c3; stroke-width: 0.05; stroke-linecap: round; }
+.p-curtain .cloth { fill: rgba(232, 226, 214, 0.28); stroke: #e8e2d6; stroke-width: 0.03; pointer-events: none; }
+.p-curtain .sheer { stroke: rgba(232, 226, 214, 0.5); stroke-width: 0.03; fill: none; pointer-events: none; }
+.p-curtain:hover .cloth { fill: rgba(232, 226, 214, 0.42); }
+.p-curtain.sel .rod { stroke: #fff; stroke-width: 0.07; }
+.p-curtain.sel .cloth { stroke: #fff; }
+
 /* A pedestal fan: green, like the air it blows. */
 .p-fan { cursor: move; }
 .p-fan .guard { fill: rgba(78, 231, 155, 0.12); stroke: #4ee79b; stroke-width: 0.03; }
@@ -433,7 +442,7 @@ html.ios.mode-editor body { background: var(--bg); }
 
 .editor.phone .hit { fill: transparent; stroke: none; }
 .editor.phone .p-hit { stroke: transparent; stroke-width: 0.6; }
-.editor.phone .p-room rect, .editor.phone .p-furn rect, .editor.phone .p-light, .editor.phone .p-ac rect, .editor.phone .p-open { cursor: default; }
+.editor.phone .p-room rect, .editor.phone .p-furn rect, .editor.phone .p-light, .editor.phone .p-ac rect, .editor.phone .p-open, .editor.phone .p-curtain rect, .editor.phone .p-fan rect { cursor: default; }
 .editor.phone .p-room:hover rect { filter: none; }
 
 .p-tools {

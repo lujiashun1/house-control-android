@@ -148,6 +148,28 @@ export function normalize(raw) {
     };
   });
 
+  // A curtain hangs on a wall of a room: a rod, a drop of cloth and two panels that gather
+  // aside as it opens. Its colour and sheerness are runtime state, not plan fields.
+  const curtains = (raw.curtains || []).map((c) => {
+    unique(c.id, 'A curtain');
+    need(roomIds.has(c.room), `Curtain "${c.id}" refers to unknown room "${c.room}"`);
+    need(isPoint(c.pos), `Curtain "${c.id}" needs "pos": [x, z]`);
+    need(WALLS.includes(c.wall), `Curtain "${c.id}" needs "wall": one of ${WALLS.join(', ')}`);
+    need((c.width ?? 2) > 0.4, `Curtain "${c.id}" needs a "width" over 0.4 m`);
+    need((c.height ?? 2.2) > 0.6, `Curtain "${c.id}" needs a "height" over 0.6 m`);
+    return {
+      ...c,
+      name: c.name || c.id,
+      width: c.width ?? 2,
+      height: c.height ?? 2.2,
+      top: c.top ?? 2.35,
+      open: c.open ?? 0.3,
+      color: c.color || '#e8e2d6',
+      opacity: c.opacity ?? 0.62,
+      level: roomLevel.get(c.room),
+    };
+  });
+
   const scenes = (raw.scenes || []).map((s) => {
     need(typeof s.id === 'string' && s.id, 'A scene is missing an "id"');
     return { id: s.id, name: s.name || s.id, icon: s.icon || 'sun', lights: s.lights || {}, acs: s.acs || {} };
@@ -186,6 +208,7 @@ export function normalize(raw) {
     lights,
     acs,
     fans,
+    curtains,
     scenes,
     bounds: all,
   };

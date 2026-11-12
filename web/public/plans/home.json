@@ -87,6 +87,11 @@
     { "id": "living.fan", "name": "Living fan", "room": "living", "pos": [1.55, 7.5], "rot": 180, "height": 0.95, "sweep": 45 }
   ],
 
+  "curtains": [
+    { "id": "living.curtain", "name": "Living curtain", "room": "living", "wall": "west", "pos": [0, 7.45],
+      "width": 1.3, "height": 2.25, "top": 2.35, "open": 0.25, "color": "#e8e2d6", "opacity": 0.62 }
+  ],
+
   "scenes": [
     { "id": "bright", "name": "Bright", "icon": "sun",
       "lights": { "*": { "on": true, "brightness": 1, "temp": 4200 } } },

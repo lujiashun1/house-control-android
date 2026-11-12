@@ -234,6 +234,7 @@ export class FanUnit {
     this.pivot = parts.pivot;
     this.tilt = parts.tilt;
     this.rotor = parts.rotor;
+    this.reverse = false;
     this.hit = parts.hit;
     this.hit.userData = { kind: 'fan', id: cfg.id };
     this.led = parts.led;
@@ -307,6 +308,7 @@ export class FanUnit {
     this.level = level >= 0 ? Math.min(SPEEDS.length - 1, level) : 3;
     this.target = on ? SPEEDS[this.level] : 0;
     this.oscOn = on && !!state.oscillate;
+    this.reverse = state.direction === 'reverse';
     if (typeof state.sweep === 'number') this.sweep = THREE.MathUtils.degToRad(state.sweep);
     if (instant) {
       this.omega = this.target;
@@ -316,8 +318,12 @@ export class FanUnit {
     }
   }
 
+  // "reverse" is a Home Assistant fan's winter direction: same speed, blades turning the
+  // other way, air pushed up along the wall instead of straight at you.
+  get turn() { return (this.reverse ? 1 : -1); }
+
   write() {
-    this.rotor.rotation.z = -this.spin;
+    this.rotor.rotation.z = this.turn * this.spin;
     this.pivot.rotation.y = this.angle;
     this.led.emissiveIntensity = this.level > 0 ? 1.6 : 0;
     this.wind.visible = this.omega > 0.6;
@@ -362,7 +368,7 @@ export class FanUnit {
 
     this.clock = (this.clock || 0) + dt;
     this.spin += this.omega * dt;
-    this.rotor.rotation.z = -this.spin;
+    this.rotor.rotation.z = this.turn * this.spin;
 
     // Sweep only while the blades are turning: the oscillator runs off the same motor.
     if (this.oscOn && this.omega > 0.5) {

@@ -510,6 +510,10 @@ html.native .card { width: auto; height: auto; box-shadow:
 .tile.dimmable { cursor: ew-resize; }
 
 .tile.ac { grid-column: 1 / -1; cursor: pointer; }
+/* A curtain tile wears the cloth's own colour and shows how far it is drawn. */
+.tile.curtain { cursor: pointer; }
+.tile.curtain .tile-level { opacity: 0.85; }
+.tile.curtain .bubble .icon { color: inherit; }
 .stepper { display: flex; align-items: center; gap: 2px; flex: none; }
 .stepper button {
   width: 28px; height: 28px; border-radius: 10px;
