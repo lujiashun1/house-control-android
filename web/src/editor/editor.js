@@ -417,6 +417,7 @@ export async function bootEditor(root) {
       ['curtain', 'blinds', 'Curtain', () => add('curtain')],
       ['vacuum', 'bot', 'Robot vacuum', () => add('vacuum')],
       ['rack', 'rack', 'Drying rack', () => add('rack')],
+      ['climate', 'droplet', 'Dehumidifier', () => add('climate')],
       ['door', 'opening', 'Door', () => add('opening', { type: 'door' })],
       ['window', 'window', 'Window', () => add('opening', { type: 'window' })],
       ['stairs', 'stairs', 'Stairs', () => add('furniture', { type: 'stairs' })],
@@ -555,7 +556,9 @@ export async function bootEditor(root) {
   }
 
   function uniqueId(base) {
-    const ids = new Set([...doc.rooms, ...doc.lights, ...doc.acs, ...doc.fans, ...doc.curtains, ...doc.vacuums, ...doc.racks, ...doc.scenes].map((x) => x.id));
+    // Every family has to be in here, or adding a second unit of a kind that is missing reuses
+    // its id: two "main.climate" entries, and the plan refuses to save.
+    const ids = new Set([...doc.rooms, ...doc.lights, ...doc.acs, ...doc.fans, ...doc.curtains, ...doc.vacuums, ...doc.racks, ...(doc.climates || []), ...doc.scenes].map((x) => x.id));
     if (!ids.has(base)) return base;
     for (let i = 2; ; i++) if (!ids.has(`${base}${i}`)) return `${base}${i}`;
   }
