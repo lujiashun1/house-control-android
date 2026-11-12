@@ -5,7 +5,7 @@ import { h, clamp, createSlider, createColorPad, openMenu } from './dom.js';
 import { icon } from './icons.js';
 import { lightColor } from '../three/lights.js';
 import { MODE_COLORS } from '../three/ac.js';
-import { AC_SWINGS } from '../store.js';
+import { AC_SWINGS, VACUUM_SPEEDS, VACUUM_SPEED_NAMES } from '../store.js';
 import { haptic, isPhone } from '../bridge.js';
 
 const MODE_LABEL = { cool: 'Cool', heat: 'Heat', dry: 'Dry', fan: 'Fan', auto: 'Auto' };
@@ -17,6 +17,9 @@ const FAN_GRADIENT = 'linear-gradient(90deg, #1f7a52 0%, #4ee79b 60%, #a7ffd3 10
 const SWATCHES = ['#ff5a4f', '#ff9a3c', '#ffd84a', '#5fe08a', '#42d6e8', '#4f8dff', '#8b5cff', '#ff5fc4'];
 // Curtain fabrics: linen, off-white, sand, sage, dusty blue, clay, slate, charcoal.
 const CLOTH_SWATCHES = ['#e8e2d6', '#f6f3ec', '#cbb9a0', '#a9b3a5', '#8f9bb0', '#b98d7e', '#6f7684', '#3f4654'];
+const VACUUM_BLUE = '#63b7ff';
+const VACUUM_GRADIENT = 'linear-gradient(90deg, #7a3a2e 0%, #d98a4e 46%, #4ee79b 100%)';
+const RACK_GRADIENT = 'linear-gradient(90deg, #2a3038 0%, #8794a4 50%, #eef2f7 100%)';
 const CURTAIN_GRADIENT = 'linear-gradient(90deg, #2a3038 0%, #6b6f7a 48%, #efe7d8 100%)';
 const SHEER_GRADIENT = 'linear-gradient(90deg, rgba(255,255,255,.12) 0%, rgba(255,255,255,.5) 50%, #ffffff 100%)';
 
@@ -54,6 +57,17 @@ function fanStatus(s) {
   const pct = Math.round(s.percent ?? Math.max(1, s.speed) * 20);
   const preset = s.preset ? `${s.preset} · ` : '';
   return `${preset}${pct}%${s.oscillate ? ' · sweeping' : ''}${s.direction === 'reverse' ? ' · reverse' : ''}`;
+}
+
+// "Cleaning · 62%": the status a vacuum reports, and how much charge it has left.
+const VACUUM_LABEL = { cleaning: 'Cleaning', paused: 'Paused', returning: 'Returning', docked: 'On dock', error: 'Error' };
+function vacuumStatus(s) {
+  return `${VACUUM_LABEL[s.status] || 'On dock'} · ${Math.round(s.battery)}%`;
+}
+
+function rackStatus(s) {
+  const pct = Math.round(s.open * 100);
+  return pct <= 2 ? 'Up' : pct >= 98 ? 'Lowered' : `${pct}% down`;
 }
 
 function acTemperatureColor(target, cfg) {
@@ -339,6 +353,59 @@ export function createPanel(root, config, store, { onFocus, onMenu }) {
     };
   }
 
+  // A drying rack is a cover: the tile shows how far down it hangs, and one tap opens it.
+  function rackTile(cfg) {
+    const sub = h('div.tile-sub');
+    const el = h('div.tile.rack', { role: 'button', tabindex: 0, 'aria-label': cfg.name, onclick: () => openSheet({ kind: 'rack', id: cfg.id }) },
+      h('div.bubble', icon('rack', 19)),
+      h('div.tile-text', h('div.tile-name', cfg.name), sub),
+      h('div.tile-level'));
+    el.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') openSheet({ kind: 'rack', id: cfg.id }); });
+    return {
+      el, cfg, kind: 'rack',
+      update() {
+        const r = state.racks[cfg.id];
+        el.style.setProperty('--c', '#cdd6e2');
+        el.style.setProperty('--level', String(Math.max(0.03, r.open)));
+        sub.textContent = ui.room === 'all' && !isPhone
+          ? `${rackStatus(r)} · ${roomName.get(cfg.room)}` : rackStatus(r);
+      },
+    };
+  }
+
+  // A robot vacuum's tile is its remote: one tap starts or pauses it, the level line under
+  // the name is the charge left in it.
+  function vacuumTile(cfg) {
+    const sub = h('div.tile-sub');
+    const el = h('div.tile.vacuum', { role: 'button', tabindex: 0, 'aria-label': cfg.name, onclick: () => openSheet({ kind: 'vacuum', id: cfg.id }) },
+      h('div.bubble', icon('bot', 19)),
+      h('div.tile-text', h('div.tile-name', cfg.name), sub),
+      h('div.tile-level'),
+      h('button.mini-power', {
+        'aria-label': `${cfg.name} start or pause`,
+        onclick: (e) => {
+          e.stopPropagation();
+          haptic('medium');
+          const v = state.vacuums[cfg.id];
+          if (v.status === 'cleaning') store.setVacuum(cfg.id, { status: 'paused' });
+          else store.cleanVacuum(cfg.id);
+        },
+      }, icon('power', 16, 2.2)));
+    el.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') openSheet({ kind: 'vacuum', id: cfg.id }); });
+    return {
+      el, cfg, kind: 'vacuum',
+      update() {
+        const v = state.vacuums[cfg.id];
+        el.classList.toggle('on', v.status === 'cleaning');
+        el.classList.toggle('low', v.battery <= 20);
+        el.style.setProperty('--c', v.status === 'error' ? '#ef5f5f' : VACUUM_BLUE);
+        el.style.setProperty('--level', String(Math.max(0.03, v.battery / 100)));
+        sub.textContent = ui.room === 'all' && !isPhone
+          ? `${vacuumStatus(v)} · ${roomName.get(cfg.room)}` : vacuumStatus(v);
+      },
+    };
+  }
+
   // A curtain has no power of its own: the tile wears the cloth's colour and shows how far
   // it is drawn, and opening it is what the tap on the cloth does.
   function curtainTile(cfg) {
@@ -362,6 +429,8 @@ export function createPanel(root, config, store, { onFocus, onMenu }) {
 
   for (const cfg of config.acs) tiles.set(cfg.id, acTile(cfg));
   for (const cfg of config.curtains || []) tiles.set(cfg.id, curtainTile(cfg));
+  for (const cfg of config.vacuums || []) tiles.set(cfg.id, vacuumTile(cfg));
+  for (const cfg of config.racks || []) tiles.set(cfg.id, rackTile(cfg));
   for (const cfg of config.fans || []) tiles.set(cfg.id, fanTile(cfg));
   for (const cfg of config.lights) tiles.set(cfg.id, lightTile(cfg));
 
@@ -386,6 +455,8 @@ export function createPanel(root, config, store, { onFocus, onMenu }) {
         if (ui.room === 'all') nodes.push(h('div.group-label', room.name));
         devices.filter((t) => t.kind === 'ac').forEach(add);
         devices.filter((t) => t.kind === 'fan').forEach(add);
+        devices.filter((t) => t.kind === 'vacuum').forEach(add);
+        devices.filter((t) => t.kind === 'rack').forEach(add);
         devices.filter((t) => t.kind === 'curtain').forEach(add);
         devices.filter((t) => t.kind === 'light').forEach(add);
       }
@@ -407,7 +478,9 @@ export function createPanel(root, config, store, { onFocus, onMenu }) {
     ui.sheet = target;
     sheetView = target.kind === 'ac' ? acSheet(target.id)
       : target.kind === 'fan' ? fanSheet(target.id)
-        : target.kind === 'curtain' ? curtainSheet(target.id) : lightSheet(target.id);
+        : target.kind === 'vacuum' ? vacuumSheet(target.id)
+          : target.kind === 'rack' ? rackSheet(target.id)
+          : target.kind === 'curtain' ? curtainSheet(target.id) : lightSheet(target.id);
     sheet.replaceChildren(...sheetView.nodes);
     panel.classList.add('hidden');
     sheet.classList.remove('hidden');
@@ -415,7 +488,7 @@ export function createPanel(root, config, store, { onFocus, onMenu }) {
     sheet.inert = false;
     card.classList.add('detail');
     hideTooltip();
-    onFocus(target.kind === 'ac' || target.kind === 'fan' || target.kind === 'curtain'
+    onFocus(['ac', 'fan', 'curtain', 'vacuum', 'rack'].includes(target.kind)
       ? target : { kind: 'room', id: store.lightCfg.get(target.id).room });
     update();
   }
@@ -611,6 +684,113 @@ export function createPanel(root, config, store, { onFocus, onMenu }) {
     };
   }
 
+  // A robot vacuum's sheet: start/pause, how hard it scrubs, send it home. The big number is
+  // the charge left, because that is what decides whether it can finish the floor.
+  function vacuumSheet(id) {
+    const cfg = store.vacuumCfg.get(id);
+    const s = () => state.vacuums[id];
+    const set = (patch) => store.setVacuum(id, patch);
+    const sub = h('div.sheet-sub');
+    const powerBtn = h('button.round.power', {
+      'aria-label': 'Start or pause',
+      onclick: () => {
+        haptic('medium');
+        set({ status: s().status === 'cleaning' ? 'paused' : 'cleaning' });
+      },
+    }, icon('power', 21, 2.2));
+    const big = bigNumber('%');
+    const speeds = VACUUM_SPEEDS.map((name) => h('button.toggle-chip.speed', {
+      onclick: () => { haptic('light'); set({ speed: name }); },
+    }, h('span.speed-name', VACUUM_SPEED_NAMES[name])));
+    const dock = h('button.toggle-chip', {
+      onclick: () => { haptic('medium'); store.dockVacuum(id); },
+    }, icon('homeDock', 17), 'Return to dock', h('span.switch'));
+    const locate = h('button.toggle-chip', {
+      onclick: () => { haptic('light'); store.locateVacuum(id); },
+    }, icon('radar', 17), 'Locate');
+    const noteText = h('span');
+    const live = h('span.live');
+
+    return {
+      nodes: [
+        sheetHead(cfg.name, sub, powerBtn),
+        h('div.readout', big.el),
+        h('div.field-label', h('span', 'Cleaning power')),
+        h('div.options', ...speeds),
+        h('div.options', dock, locate),
+        h('div.sheet-note', icon('bot', 20), noteText),
+      ],
+      update() {
+        const v = s();
+        const working = v.status === 'cleaning';
+        powerBtn.classList.toggle('on', working);
+        sub.replaceChildren(live, h('b', VACUUM_LABEL[v.status] || 'On dock'));
+        const ring = v.status === 'error' ? '#ef5f5f' : v.status === 'cleaning' ? '#4ee79b' : VACUUM_BLUE;
+        live.style.background = ring;
+        live.style.boxShadow = working ? `0 0 8px ${ring}` : 'none';
+        big.set(Math.round(v.battery), !working && v.status !== 'returning');
+        for (const [i, chip] of speeds.entries()) {
+          chip.classList.toggle('active', v.speed === VACUUM_SPEEDS[i]);
+          chip.classList.toggle('on', v.speed === VACUUM_SPEEDS[i]);
+        }
+        dock.classList.toggle('active', v.status === 'returning');
+        dock.classList.toggle('hidden', v.status === 'docked');
+        // Find-it only exists where the platform has a `locate` service; a simulated robot
+        // has nothing to flash, so the chip stays out of the way.
+        locate.classList.toggle('hidden', !cfg.link?.service);
+        const link = cfg.link?.service
+          ? ` · ${cfg.link.service === 'homeassistant' ? 'Home Assistant' : cfg.link.service} ${cfg.link.id}` : ' · simulated';
+        noteText.textContent = `${roomName.get(cfg.room)} · ${VACUUM_SPEED_NAMES[v.speed] || 'Standard'}, docked in ${roomName.get(cfg.room)}${link}`;
+      },
+    };
+  }
+
+  // A drying rack is a Home Assistant `cover`: the slider is its position, 0 up, 100 down.
+  function rackSheet(id) {
+    const cfg = store.rackCfg.get(id);
+    const s = () => state.racks[id];
+    const set = (open) => store.setRack(id, { open });
+    const sub = h('div.sheet-sub');
+    const powerBtn = h('button.round.power', {
+      'aria-label': 'Lower or raise',
+      onclick: () => { haptic('medium'); set(s().open > 0.5 ? 0 : 1); },
+    }, icon('rack', 21, 1.8));
+    const big = bigNumber('%');
+    const slider = createSlider({
+      min: 0, max: 100, step: 1, value: Math.round(s().open * 100), gradient: RACK_GRADIENT,
+      labels: ['Up', 'Down'], detent: 5,
+      onInput: (v) => set(v / 100),
+    });
+    const up = h('button.toggle-chip', { onclick: () => { haptic('light'); set(0); } }, icon('undo', 17, 2), 'Raise');
+    const down = h('button.toggle-chip', { onclick: () => { haptic('light'); set(1); } }, icon('rotate', 17), 'Lower');
+    const noteText = h('span');
+    const live = h('span.live');
+
+    return {
+      nodes: [
+        sheetHead(cfg.name, sub, powerBtn),
+        h('div.readout', big.el),
+        h('div.slider-row', slider.el),
+        h('div.options', up, down),
+        h('div.sheet-note', icon('rack', 20), noteText),
+      ],
+      update() {
+        const r = s();
+        sub.replaceChildren(live, h('b', rackStatus(r)));
+        live.style.background = r.open > 0.02 ? '#63b7ff' : 'rgba(255,255,255,.25)';
+        live.style.boxShadow = r.open > 0.02 ? '0 0 8px #63b7ff' : 'none';
+        big.set(Math.round(r.open * 100));
+        slider.set(Math.round(r.open * 100));
+        powerBtn.classList.toggle('on', r.open > 0.02);
+        up.classList.toggle('active', r.open <= 0.02);
+        down.classList.toggle('active', r.open >= 0.98);
+        const link = cfg.link?.service
+          ? ` · ${cfg.link.service === 'homeassistant' ? 'Home Assistant' : cfg.link.service} ${cfg.link.id}` : ' · simulated';
+        noteText.textContent = `${roomName.get(cfg.room)} · ${(cfg.width ?? 1.6).toFixed(2)} m wide, drops ${(cfg.lift ?? 1.3).toFixed(2)} m${link}`;
+      },
+    };
+  }
+
   function curtainSheet(id) {
     const cfg = store.curtainCfg.get(id);
     const s = () => state.curtains[id];
@@ -753,6 +933,14 @@ export function createPanel(root, config, store, { onFocus, onMenu }) {
       const cfg = store.fanCfg.get(hit.id);
       const s = state.fans[hit.id];
       name = cfg.name; status = fanStatus(s); on = s.on; color = FAN_GREEN;
+    } else if (hit.kind === 'rack') {
+      const cfg = store.rackCfg.get(hit.id);
+      const s = state.racks[hit.id];
+      name = cfg.name; status = rackStatus(s); on = s.open > 0.02; color = '#cdd6e2';
+    } else if (hit.kind === 'vacuum') {
+      const cfg = store.vacuumCfg.get(hit.id);
+      const s = state.vacuums[hit.id];
+      name = cfg.name; status = vacuumStatus(s); on = s.status === 'cleaning'; color = VACUUM_BLUE;
     } else {
       const cfg = store.acCfg.get(hit.id);
       const s = state.acs[hit.id];
@@ -773,6 +961,11 @@ export function createPanel(root, config, store, { onFocus, onMenu }) {
     if (ui.sheet?.kind === 'curtain') {
       const c = state.curtains[ui.sheet.id];
       return new THREE.Color(c.color).multiplyScalar(0.10 + 0.10 * c.open);
+    }
+    // A robot vacuum's sheet is lit by how much charge it has left.
+    if (ui.sheet?.kind === 'vacuum') {
+      const v = state.vacuums[ui.sheet.id];
+      return new THREE.Color(v.status === 'error' ? '#ef5f5f' : VACUUM_BLUE).multiplyScalar(0.10 + 0.06 * (v.battery / 100));
     }
     // A fan's sheet is lit in the colour of its own airflow.
     if (ui.sheet?.kind === 'fan') {

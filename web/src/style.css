@@ -511,6 +511,15 @@ html.native .card { width: auto; height: auto; box-shadow:
 
 .tile.ac { grid-column: 1 / -1; cursor: pointer; }
 /* A curtain tile wears the cloth's own colour and shows how far it is drawn. */
+/* A drying rack is a cover: no power, just the height it hangs at. */
+.tile.rack { cursor: pointer; }
+.tile.rack .tile-level { opacity: 0.85; }
+.tile.rack .bubble .icon { color: #cdd6e2; }
+
+/* A robot vacuum: the charge bar under the name is its tile-level, the dot is its status. */
+.tile.vacuum { cursor: pointer; }
+.tile.vacuum .tile-level { opacity: 0.9; }
+.tile.vacuum.low .bubble .icon { color: #f0b45a; }
 .tile.curtain { cursor: pointer; }
 .tile.curtain .tile-level { opacity: 0.85; }
 .tile.curtain .bubble .icon { color: inherit; }

@@ -30,6 +30,19 @@ function defaultCurtain(cfg) {
   return { open: cfg.open ?? 0.3, color: cfg.color || '#e8e2d6', opacity: cfg.opacity ?? 0.62 };
 }
 
+// A robot vacuum: where it is (status, the same words a Home Assistant vacuum uses), how
+// full it is, and how hard it scrubs. No `on` — the status says whether it is working.
+function defaultVacuum(cfg) {
+  return { status: 'docked', battery: cfg.battery ?? 70, speed: cfg.speed || 'standard' };
+}
+
+function defaultRack(cfg) {
+  return { open: cfg.open ?? 0.15 };
+}
+
+export const VACUUM_SPEEDS = ['quiet', 'standard', 'strong', 'max'];
+export const VACUUM_SPEED_NAMES = { quiet: 'Quiet', standard: 'Standard', strong: 'Strong', max: 'Max' };
+
 function defaultAC(cfg, outdoor) {
   return {
     on: false, target: 24, mode: 'cool', fan: 'auto', swing: 'swing',
@@ -45,11 +58,15 @@ export function createStore(config) {
   const acCfg = new Map(config.acs.map((a) => [a.id, a]));
   const fanCfg = new Map((config.fans || []).map((f) => [f.id, f]));
   const curtainCfg = new Map((config.curtains || []).map((c) => [c.id, c]));
+  const vacuumCfg = new Map((config.vacuums || []).map((v) => [v.id, v]));
+  const rackCfg = new Map((config.racks || []).map((r) => [r.id, r]));
 
-  const state = { lights: {}, acs: {}, fans: {}, curtains: {}, scene: null };
+  const state = { lights: {}, acs: {}, fans: {}, curtains: {}, racks: {}, vacuums: {}, scene: null };
   for (const l of config.lights) state.lights[l.id] = defaultLight(l);
   for (const f of config.fans || []) state.fans[f.id] = defaultFan(f);
   for (const c of config.curtains || []) state.curtains[c.id] = defaultCurtain(c);
+  for (const v of config.vacuums || []) state.vacuums[v.id] = defaultVacuum(v);
+  for (const r of config.racks || []) state.racks[r.id] = defaultRack(r);
   for (const a of config.acs) state.acs[a.id] = defaultAC(a, config.outdoorTemp);
   // What each real AC can do, as reported by the native side. A simulated AC can do everything.
   const features = {};
@@ -65,6 +82,8 @@ export function createStore(config) {
       for (const [id, s] of Object.entries(saved.acs || {})) if (state.acs[id]) Object.assign(state.acs[id], s);
       for (const [id, s] of Object.entries(saved.fans || {})) if (state.fans[id]) Object.assign(state.fans[id], s);
       for (const [id, s] of Object.entries(saved.curtains || {})) if (state.curtains[id]) Object.assign(state.curtains[id], s);
+      for (const [id, s] of Object.entries(saved.vacuums || {})) if (state.vacuums[id]) Object.assign(state.vacuums[id], s);
+      for (const [id, s] of Object.entries(saved.racks || {})) if (state.racks[id]) Object.assign(state.racks[id], s);
       for (const [id, f] of Object.entries(saved.features || {})) if (state.acs[id]) features[id] = f;
       for (const [id, f] of Object.entries(saved.fanFeatures || {})) if (state.fans[id]) fanFeatures[id] = f;
       state.scene = saved.scene || null;
@@ -89,19 +108,21 @@ export function createStore(config) {
       post('summary', summary());
       // The native shell passes this on to its other views of the same home (the panel
       // and the island each run their own store), which adopt it without re-sending.
-      if (!change.adopted) post('state', { lights: state.lights, acs: state.acs, fans: state.fans, curtains: state.curtains, scene: state.scene, source: change.source ?? store.source ?? null });
+      if (!change.adopted) post('state', { lights: state.lights, acs: state.acs, fans: state.fans, curtains: state.curtains, racks: state.racks, vacuums: state.vacuums, scene: state.scene, source: change.source ?? store.source ?? null });
     }
   }
 
   // One command per device is in flight at a time. Whatever changes meanwhile is merged
   // into a single follow-up, so dragging a slider costs a couple of requests (or infrared
   // key presses) instead of dozens. A change the device refuses is rolled back.
-  const COOL_DOWN = { light: 300, ac: 900, fan: 500, cover: 700 };
+  const COOL_DOWN = { light: 300, ac: 900, fan: 500, cover: 700, rack: 700, vacuum: 800 };
   const outbox = new Map();
 
   const stateOf = (kind, id) => kind === 'light' ? state.lights[id]
     : kind === 'fan' ? state.fans[id]
     : kind === 'cover' ? state.curtains[id]
+    : kind === 'vacuum' ? state.vacuums[id]
+    : kind === 'rack' ? state.racks[id]
     : state.acs[id];
 
   function transmit(kind, id, patch) {
@@ -229,6 +250,57 @@ export function createStore(config) {
     return true;
   }
 
+  // A vacuum's status is a closed set: anything else falls back to docked.
+  const VACUUM_STATUS = ['cleaning', 'paused', 'returning', 'docked', 'error'];
+  function sanitizeVacuum(patch) {
+    const out = {};
+    if ('status' in patch && VACUUM_STATUS.includes(patch.status)) out.status = patch.status;
+    if ('battery' in patch) out.battery = clamp(Math.round(Number(patch.battery)), 0, 100);
+    if ('speed' in patch && VACUUM_SPEEDS.includes(patch.speed)) out.speed = patch.speed;
+    // `locate` is a request, not a state: a counter that only ever goes up, so a second
+    // tap is still a change and still reaches the robot.
+    if ('locate' in patch) out.locate = Math.round(Number(patch.locate)) || 0;
+    return out;
+  }
+
+  // A drying rack only has a position, so it needs nothing but 0…1 clamped.
+  function sanitizeRack(patch) {
+    return 'open' in patch ? { open: clamp(Number(patch.open), 0, 1) } : {};
+  }
+
+  function writeRack(id, patch, { remote = false } = {}) {
+    const cur = state.racks[id];
+    const cfg = rackCfg.get(id);
+    if (!cur) return false;
+    const clean = sanitizeRack(patch);
+    const diff = Object.fromEntries(Object.entries(clean).filter(([k, v]) => cur[k] !== v));
+    if (!Object.keys(diff).length) return false;
+    const before = Object.fromEntries(Object.keys(diff).map((k) => [k, cur[k]]));
+    Object.assign(cur, diff);
+    // A rack wired to a Home Assistant cover sends its position; a simulated one just moves.
+    if (!remote && cfg.link?.service && 'open' in diff) dispatch('rack', id, { open: diff.open }, before);
+    return true;
+  }
+
+  function writeVacuum(id, patch, { remote = false } = {}) {
+    const cur = state.vacuums[id];
+    const cfg = vacuumCfg.get(id);
+    if (!cur) return false;
+    const clean = sanitizeVacuum(patch);
+    const diff = Object.fromEntries(Object.entries(clean).filter(([k, v]) => cur[k] !== v));
+    if (!Object.keys(diff).length) return false;
+    const before = Object.fromEntries(Object.keys(diff).map((k) => [k, cur[k]]));
+    Object.assign(cur, diff);
+    // A robot linked to a Home Assistant vacuum acts through the native side; a simulated
+    // one just drives around this WebView. Battery is a reading, never sent.
+    if (!remote && cfg.link?.service) {
+      const out = { ...diff };
+      delete out.battery;
+      if (Object.keys(out).length) dispatch('vacuum', id, out, before);
+    }
+    return true;
+  }
+
   // The cloth's shape is kept clean whether the curtain is simulated or a real cover.
   function sanitizeCurtain(patch) {
     const out = {};
@@ -274,6 +346,8 @@ export function createStore(config) {
     acCfg,
     fanCfg,
     curtainCfg,
+    rackCfg,
+    vacuumCfg,
     summary,
     /** Set by the UI: called with (device id, message) when a real device refuses a change. */
     onDeviceError: null,
@@ -316,6 +390,20 @@ export function createStore(config) {
     setCurtain(id, patch) {
       if (writeCurtain(id, patch)) emit({ type: 'curtain', id });
     },
+    setRack(id, patch) {
+      if (writeRack(id, patch)) emit({ type: 'rack', id });
+    },
+    setVacuum(id, patch) {
+      if (writeVacuum(id, patch)) emit({ type: 'vacuum', id });
+    },
+    cleanVacuum(id) { store.setVacuum(id, { status: 'cleaning' }); },
+    locateVacuum(id) {
+      // Make the robot beep where it is. Simulated robots have nowhere to beep, so the
+      // panel only offers this on a linked one.
+      const v = state.vacuums[id];
+      if (v) store.setVacuum(id, { locate: (v.locate || 0) + 1 });
+    },
+    dockVacuum(id) { store.setVacuum(id, { status: 'returning' }); },
     setAllCurtains(open) {
       let any = false;
       for (const id of Object.keys(state.curtains)) any = writeCurtain(id, { open }) || any;
@@ -358,6 +446,8 @@ export function createStore(config) {
       for (const [id, s] of Object.entries(other.acs || {})) any = writeAC(id, s, { remote: true }) || any;
       for (const [id, s] of Object.entries(other.fans || {})) any = writeFan(id, s, { remote: true }) || any;
       for (const [id, s] of Object.entries(other.curtains || {})) any = writeCurtain(id, s, { remote: true }) || any;
+      for (const [id, s] of Object.entries(other.vacuums || {})) any = writeVacuum(id, s, { remote: true }) || any;
+      for (const [id, s] of Object.entries(other.racks || {})) any = writeRack(id, s, { remote: true }) || any;
       const scene = other.scene ?? null;
       if (scene !== state.scene) { state.scene = scene; any = true; }
       if (any) emit({ type: 'bulk', remote: true, adopted: true, source: other.source || null });
@@ -370,6 +460,8 @@ export function createStore(config) {
       for (const [id, patch] of Object.entries(update.acs || {})) any = writeAC(id, patch, { remote: true }) || any;
       for (const [id, f] of Object.entries(update.fans || {})) any = writeFan(id, f, { remote: true }) || any;
       for (const [id, c] of Object.entries(update.curtains || {})) any = writeCurtain(id, c, { remote: true }) || any;
+      for (const [id, v] of Object.entries(update.vacuums || {})) any = writeVacuum(id, v, { remote: true }) || any;
+      for (const [id, r] of Object.entries(update.racks || {})) any = writeRack(id, r, { remote: true }) || any;
       for (const [id, f] of Object.entries(update.features || {})) {
         if (state.acs[id] && JSON.stringify(features[id]) !== JSON.stringify(f)) { features[id] = f; any = true; }
         if (state.fans[id] && JSON.stringify(fanFeatures[id]) !== JSON.stringify(f)) { fanFeatures[id] = f; any = true; }
@@ -390,6 +482,16 @@ export function createStore(config) {
       const step = a.on ? 0.2 : 0.1;
       const next = Math.abs(goal - a.roomTemp) <= step ? goal : a.roomTemp + Math.sign(goal - a.roomTemp) * step;
       if (next !== a.roomTemp) { a.roomTemp = Math.round(next * 10) / 10; any = true; }
+    }
+    // A robot that is not linked to a platform drains while it cleans and charges on its
+    // dock. One that is linked reports its own level, so we never guess for it.
+    for (const [id, v] of Object.entries(state.vacuums)) {
+      if (vacuumCfg.get(id)?.link?.service) continue;
+      const next = v.status === 'cleaning' ? Math.max(3, v.battery - 1)
+        : v.status === 'docked' ? Math.min(100, v.battery + 1)
+        : v.status === 'returning' ? Math.max(3, v.battery - 0.5)
+        : v.battery;
+      if (next !== v.battery) { v.battery = Math.round(next); any = true; }
     }
     if (any) { for (const fn of listeners) fn({ type: 'tick' }); persist(); }
   }, 3000);

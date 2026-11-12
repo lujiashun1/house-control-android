@@ -44,7 +44,7 @@ interface DeviceService {
 }
 
 enum class DeviceKind(val raw: String) {
-    LIGHT("light"), AC("ac"), FAN("fan"), COVER("cover"), SENSOR("sensor");
+    LIGHT("light"), AC("ac"), FAN("fan"), COVER("cover"), RACK("rack"), VACUUM("vacuum"), SENSOR("sensor");
 
     companion object {
         fun of(raw: String?) = entries.firstOrNull { it.raw == raw }
@@ -70,7 +70,8 @@ data class ServiceDevice(
     var room: String? = null,
     var online: Boolean = true,
     /** For lights: which of "brightness", "temp", "color" it supports. For fans: "percentage",
-     *  "oscillate", "direction", "preset". For covers: "position" (it takes a percentage). */
+     *  "oscillate", "direction", "preset". For covers: "position" (it takes a percentage).
+     *  For vacuums: "battery", "fan_speed" (it takes a named cleaning power). */
     var capabilities: List<String> = emptyList(),
     /** For ACs: the set-point range it accepts. */
     var range: Pair<Double, Double>? = null,
@@ -93,6 +94,8 @@ data class DeviceReading(
     var fan: JSONObject? = null,
     /** What a curtain reports: `open` 0…1 and `on`. */
     var cover: JSONObject? = null,
+    /** What a robot vacuum reports: `status` (cleaning/paused/returning/docked/error), `battery`. */
+    var vacuum: JSONObject? = null,
     /** What an AC can do: `modes`, `fans`, `swing`, `sleep`, `eco` (see the store's acFeatures). */
     var features: JSONObject? = null,
     /** A temperature sensor's reading in °C. */

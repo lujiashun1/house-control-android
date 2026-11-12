@@ -181,6 +181,8 @@ private fun ItemRow(item: PlanEditor.Item, device: RealDevice?, onClick: () -> U
         DeviceKind.AC -> R.drawable.lucide_air_vent
         DeviceKind.FAN -> R.drawable.lucide_fan
         DeviceKind.COVER -> R.drawable.lucide_blinds
+        DeviceKind.RACK -> R.drawable.lucide_shirt
+        DeviceKind.VACUUM -> R.drawable.lucide_bot
         else -> R.drawable.lucide_lamp_ceiling
     }
     val tint = link?.let { serviceTint(it.service) } ?: Palette.faint
@@ -211,6 +213,8 @@ private fun DevicePicker(
             "ac" -> "No air conditioners on the connected platforms."
             "fan" -> "No fans on the connected platforms."
             "cover" -> "No covers on the connected platforms."
+            "vacuum" -> "No robot vacuums on the connected platforms."
+            "rack" -> "No covers on the connected platforms."
             else -> "No lights or plugs on the connected platforms."
         })
         for ((service, list) in candidates.groupBy { it.service }) {
@@ -260,6 +264,7 @@ private fun AddDevicesScreen(
                         "ac" -> R.drawable.lucide_air_vent
                         "fan" -> R.drawable.lucide_fan
                         "cover" -> R.drawable.lucide_blinds
+                        "vacuum" -> R.drawable.lucide_bot
                         else -> R.drawable.lucide_lightbulb
                     }, device.name,
                         listOf(serviceTitle(device.service), device.detail).filter { it.isNotEmpty() }.joinToString(" · "),

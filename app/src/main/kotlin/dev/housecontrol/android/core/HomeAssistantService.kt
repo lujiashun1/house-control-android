@@ -198,6 +198,12 @@ class HomeAssistantService(
                     capabilities = coverCapabilities(attributes.optInt("supported_features", 0), attributes)
                     detail = "cover · " + (capabilities.joinToString(", ").ifEmpty { "open/close" })
                 }
+                "vacuum" -> ServiceDevice(id, name, DeviceKind.VACUUM).apply {
+                    // A vacuum always says how full it is; only some take a named cleaning power.
+                    val speeds = attributes.optJSONArray("fan_speed_list").strings()
+                    capabilities = listOf("battery") + if (speeds.isNotEmpty()) listOf("fan_speed") else emptyList()
+                    detail = "vacuum · " + capabilities.joinToString(", ")
+                }
                 "climate" -> ServiceDevice(id, name, DeviceKind.AC).apply {
                     val lo = attributes.double("min_temp")
                     val hi = attributes.double("max_temp")
@@ -314,6 +320,20 @@ class HomeAssistantService(
                 position?.let { cover.put("open", (it / 100.0).coerceIn(0.0, 1.0)) }
                 reading.cover = cover
                 reading.features = jsonOf("position" to (attributes.has("current_position")))
+            } else if (id.startsWith("vacuum.")) {
+                // Home Assistant's vacuum states are the panel's too, bar `idle`, which a docked
+                // robot reports when nobody asked it to do anything.
+                val status = when (value) {
+                    "cleaning", "returning", "paused", "error" -> value
+                    else -> "docked"
+                }
+                val vacuum = jsonOf("status" to status)
+                attributes.double("battery_level")?.let {
+                    vacuum.put("battery", it.coerceIn(0.0, 100.0).roundHalfAway())
+                }
+                attributes.string("fan_speed")?.let { if (it.isNotEmpty() && it != "none") vacuum.put("speed", it) }
+                reading.vacuum = vacuum
+                reading.features = jsonOf("speeds" to attributes.optJSONArray("fan_speed_list").strings())
             } else if (id.startsWith("climate.")) {
                 val modes = modeTable(attributes.optJSONArray("hvac_modes").strings())
                 val ac = jsonOf("on" to (value != "off"))
@@ -388,6 +408,21 @@ class HomeAssistantService(
                     if (on != true) return emptyList()
                     out += call("turn_on")
                 }
+                return out
+            }
+            if (domain == "vacuum") {
+                val out = mutableListOf<Call>()
+                (patch.opt("status") as? String)?.let { status ->
+                    when (status) {
+                        "cleaning" -> out += call("start")
+                        "paused" -> out += call("stop") // a paused robot is stopped, not switched off
+                        "returning", "docked" -> out += call("return_to_base")
+                        else -> {} // `error` is a reading, not a command
+                    }
+                }
+                // `locate` makes the robot beep: it carries no state, so the panel counts taps.
+                if (patch.opt("locate") != null) out += call("locate")
+                (patch.opt("speed") as? String)?.let { out += call("set_fan_speed", jsonOf("fan_speed" to it)) }
                 return out
             }
             if (domain == "cover") {

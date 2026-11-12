@@ -55,6 +55,7 @@ class PlanEditor(plan: JSONObject) {
             val out = mutableListOf<Item>()
             for ((kind, key) in listOf(
                 DeviceKind.LIGHT to "lights", DeviceKind.AC to "acs", DeviceKind.FAN to "fans", DeviceKind.COVER to "curtains",
+                DeviceKind.VACUUM to "vacuums", DeviceKind.RACK to "racks",
             )) {
                 for (device in plan.objects(key)) {
                     val id = device.string("id") ?: continue
@@ -79,7 +80,7 @@ class PlanEditor(plan: JSONObject) {
     // MARK: - Linking
 
     private fun find(id: String): JSONObject? {
-        for (key in listOf("lights", "acs", "fans", "curtains")) {
+        for (key in listOf("lights", "acs", "fans", "curtains", "racks", "vacuums")) {
             plan.objects(key).firstOrNull { it.optString("id") == id }?.let { return it }
         }
         return null

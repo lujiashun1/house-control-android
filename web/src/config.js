@@ -170,6 +170,42 @@ export function normalize(raw) {
     };
   });
 
+  // A robot vacuum parks on its dock: the plan position is the dock, and the room it belongs
+  // to is the area it cleans, so the model is given that room's rectangle to wander in.
+  const vacuums = (raw.vacuums || []).map((v) => {
+    unique(v.id, 'A robot vacuum');
+    need(roomIds.has(v.room), `Vacuum "${v.id}" refers to unknown room "${v.room}"`);
+    need(isPoint(v.pos), `Vacuum "${v.id}" needs "pos": [x, z]`);
+    const room = rooms.find((r) => r.id === v.room);
+    return {
+      ...v,
+      name: v.name || v.id,
+      rot: v.rot || 0,
+      battery: v.battery ?? 70,
+      speed: v.speed || 'standard',
+      rect: { x: room.x, z: room.z, w: room.w, d: room.d },
+      level: roomLevel.get(v.room),
+    };
+  });
+
+  // A motorised drying rack hangs from a ceiling: it belongs to a room but stands anywhere
+  // in it, and it lifts what a `cover` position says (1 = fully lowered).
+  const racks = (raw.racks || []).map((r) => {
+    unique(r.id, 'A drying rack');
+    need(roomIds.has(r.room), `Rack "${r.id}" refers to unknown room "${r.room}"`);
+    need(isPoint(r.pos), `Rack "${r.id}" needs "pos": [x, z]`);
+    const room = rooms.find((x) => x.id === r.room);
+    return {
+      ...r,
+      name: r.name || r.id,
+      rot: r.rot || 0,
+      width: r.width ?? 1.6,
+      lift: r.lift ?? 1.3,
+      top: r.top ?? 2.62,
+      level: roomLevel.get(r.room),
+    };
+  });
+
   const scenes = (raw.scenes || []).map((s) => {
     need(typeof s.id === 'string' && s.id, 'A scene is missing an "id"');
     return { id: s.id, name: s.name || s.id, icon: s.icon || 'sun', lights: s.lights || {}, acs: s.acs || {} };
@@ -209,6 +245,8 @@ export function normalize(raw) {
     acs,
     fans,
     curtains,
+    racks,
+    vacuums,
     scenes,
     bounds: all,
   };
