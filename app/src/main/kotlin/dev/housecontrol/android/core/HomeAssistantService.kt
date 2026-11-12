@@ -18,8 +18,8 @@ import java.util.concurrent.TimeUnit
  * A Home Assistant server on the local network (or anywhere it is reachable), through its
  * REST API with a long-lived access token. Lights and switches become lamps, `climate`
  * entities become air conditioners, `fan` entities become fans (percentage in their own
- * steps, preset names, oscillation and direction) and temperature sensors can stand in for
- * an AC's room reading. A WebSocket subscription tells the hub the moment something changes.
+ * steps, preset names, oscillation and direction), `humidifier` entities become
+ * dehumidifiers / humidifiers and temperature sensors can stand in for an AC's room reading. A WebSocket subscription tells the hub the moment something changes.
  *
  * Everything that changes the service's own state runs on `scope` (the main thread).
  */
@@ -50,6 +50,8 @@ class HomeAssistantService(
     /** Each climate entity's own names for the panel's fan speeds and modes, from the last read. */
     private val fanNames = HashMap<String, Map<String, String>>()
     private val modeNames = HashMap<String, Map<String, String>>()
+    /** Each humidifier's own names for the panel's three modes, from the last read. */
+    private val humidityNames = HashMap<String, Map<String, String>>()
     /** The entities linked in the plan: only their changes are worth a read. */
     @Volatile private var watched: Set<String> = emptySet()
     private var changePending = false
@@ -147,13 +149,16 @@ class HomeAssistantService(
                 fanNames[id] = FanNames.table(attributes.optJSONArray("fan_modes").strings())
                 modeNames[id] = modeTable(attributes.optJSONArray("hvac_modes").strings())
             }
+            if (id.startsWith("humidifier.")) {
+                humidityNames[id] = HumidifierModes.table(attributes.optJSONArray("available_modes").strings())
+            }
             out[id] = reading(state)
         }
         return out
     }
 
     override suspend fun send(kind: DeviceKind, id: String, patch: JSONObject, state: JSONObject) {
-        for (call in calls(id, patch, state, fanNames[id].orEmpty(), modeNames[id].orEmpty())) {
+        for (call in calls(id, patch, state, fanNames[id].orEmpty(), modeNames[id].orEmpty(), humidityNames[id].orEmpty())) {
             request("POST", "/api/services/${call.domain}/${call.service}", body = call.data)
         }
     }
@@ -189,7 +194,15 @@ class HomeAssistantService(
                         detail = "light · " + if (modes.isEmpty()) "on/off" else modes.joinToString(", ")
                     }
                 }
-                "switch" -> ServiceDevice(id, name, DeviceKind.LIGHT, detail = "switch · on/off")
+                "switch" -> {
+                    // Plenty of dehumidifiers only reach Home Assistant as a switch. Their name
+                    // says what they are, so they are listed as a unit instead of a lamp.
+                    if (isHumidifierName(id, name)) {
+                        ServiceDevice(id, name, DeviceKind.HUMIDIFIER, detail = "switch · on/off")
+                    } else {
+                        ServiceDevice(id, name, DeviceKind.LIGHT, detail = "switch · on/off")
+                    }
+                }
                 "fan" -> ServiceDevice(id, name, DeviceKind.FAN).apply {
                     capabilities = fanCapabilities(attributes.optInt("supported_features", 0))
                     detail = "fan · " + (capabilities.joinToString(", ").ifEmpty { "on/off" })
@@ -203,6 +216,18 @@ class HomeAssistantService(
                     val speeds = attributes.optJSONArray("fan_speed_list").strings()
                     capabilities = listOf("battery") + if (speeds.isNotEmpty()) listOf("fan_speed") else emptyList()
                     detail = "vacuum · " + capabilities.joinToString(", ")
+                }
+                "humidifier" -> ServiceDevice(id, name, DeviceKind.HUMIDIFIER).apply {
+                    // `device_class` is "humidifier" or "dehumidifier"; both control the same kind.
+                    val lo = attributes.double("min_humidity")
+                    val hi = attributes.double("max_humidity")
+                    if (lo != null && hi != null) range = maxOf(lo, 30.0) to minOf(hi, 80.0)
+                    val modes = attributes.optJSONArray("available_modes").strings()
+                    val deviceClass = attributes.optString("device_class")
+                    detail = "humidifier · " + listOf(
+                        if (deviceClass == "dehumidifier") "dehumidifier" else "humidifier",
+                        if (modes.isEmpty()) "on/off" else modes.joinToString(", "),
+                    ).joinToString(" · ")
                 }
                 "climate" -> ServiceDevice(id, name, DeviceKind.AC).apply {
                     val lo = attributes.double("min_temp")
@@ -250,6 +275,12 @@ class HomeAssistantService(
             if ("color_temp" in modes) caps += "temp"
             if (modes.any { it in listOf("hs", "xy", "rgb", "rgbw", "rgbww") }) caps += "color"
             return caps
+        }
+
+        /** A switch whose name says dehumidifier / humidifier, rather than a lamp or a plug. */
+        fun isHumidifierName(id: String, name: String): Boolean {
+            val text = "$id $name".lowercase()
+            return listOf("humidif", "dehumidif", "除湿", "加湿", "抽湿").any { text.contains(it) }
         }
 
         fun isTemperature(attributes: JSONObject) =
@@ -334,6 +365,20 @@ class HomeAssistantService(
                 attributes.string("fan_speed")?.let { if (it.isNotEmpty() && it != "none") vacuum.put("speed", it) }
                 reading.vacuum = vacuum
                 reading.features = jsonOf("speeds" to attributes.optJSONArray("fan_speed_list").strings())
+            } else if (id.startsWith("humidifier.")) {
+                val unit = jsonOf("on" to (value != "off"))
+                attributes.double("target_humidity")?.let { unit.put("target", it.coerceIn(0.0, 100.0)) }
+                attributes.double("humidity")?.let { unit.put("humidity", it.coerceIn(0.0, 100.0)) }
+                val modes = HumidifierModes.table(attributes.optJSONArray("available_modes").strings())
+                attributes.string("mode")?.let { current ->
+                    modes.entries.firstOrNull { it.value == current }?.let { unit.put("mode", it.key) }
+                }
+                reading.humidifier = unit
+                reading.features = jsonOf(
+                    "modes" to HumidifierModes.order.filter { it in modes },
+                    "min" to (attributes.double("min_humidity") ?: 30.0),
+                    "max" to (attributes.double("max_humidity") ?: 80.0),
+                )
             } else if (id.startsWith("climate.")) {
                 val modes = modeTable(attributes.optJSONArray("hvac_modes").strings())
                 val ac = jsonOf("on" to (value != "off"))
@@ -373,7 +418,7 @@ class HomeAssistantService(
             return reading
         }
 
-        fun calls(id: String, patch: JSONObject, state: JSONObject, fans: Map<String, String>, modes: Map<String, String>): List<Call> {
+        fun calls(id: String, patch: JSONObject, state: JSONObject, fans: Map<String, String>, modes: Map<String, String>, humidityModes: Map<String, String> = emptyMap()): List<Call> {
             val domain = id.substringBefore(".")
             fun call(service: String, data: JSONObject = JSONObject()) =
                 Call(domain, service, jsonOf("entity_id" to id).mergeFrom(data))
@@ -434,6 +479,22 @@ class HomeAssistantService(
                     return if (on == true) listOf(call("open_cover")) else emptyList()
                 }
                 return listOf(call("set_cover_position", jsonOf("position" to (target.coerceIn(0.0, 1.0) * 100).roundHalfAway().toInt())))
+            }
+            if (domain == "humidifier") {
+                val out = mutableListOf<Call>()
+                val on = patch.bool("on")
+                if (on == false) return listOf(call("turn_off"))
+                if (on == true) out += call("turn_on")
+                // The panel's target is a percentage, the same unit Home Assistant uses.
+                patch.double("target")?.let {
+                    out += call("set_humidity", jsonOf("humidity" to it.roundHalfAway().toInt().coerceIn(0, 100)))
+                }
+                (patch.opt("mode") as? String)?.let { wanted ->
+                    (humidityModes[wanted] ?: humidityModes.values.firstOrNull())?.let {
+                        out += call("set_mode", jsonOf("mode" to it))
+                    }
+                }
+                return out
             }
             if (domain != "climate") return emptyList()
 
@@ -539,5 +600,24 @@ class HomeAssistantService(
             delay(15_000)
             listen()
         }
+    }
+}
+
+/**
+ * The panel's three modes and a Home Assistant humidifier's own `available_modes`. There is no
+ * fixed vocabulary in Home Assistant (normal, eco, sleep, auto, boost…, depending on the
+ * integration), so a mode the unit does not offer sends no mode and leaves it as it is.
+ */
+object HumidifierModes {
+    val order = listOf("auto", "continuous", "sleep")
+
+    fun table(available: List<String>): Map<String, String> {
+        val out = LinkedHashMap<String, String>()
+        fun pick(names: List<String>) = names.firstOrNull { it in available }
+        pick(listOf("auto"))?.let { out["auto"] = it }
+        pick(listOf("continuous", "normal", "comfort", "home", "boost", "eco", "away", "baby"))
+            ?.let { if (it != out["auto"]) out["continuous"] = it }
+        pick(listOf("sleep"))?.let { out["sleep"] = it }
+        return out
     }
 }

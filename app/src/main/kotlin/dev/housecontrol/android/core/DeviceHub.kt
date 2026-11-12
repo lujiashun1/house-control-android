@@ -91,7 +91,7 @@ class DeviceHub(
         val others = HashMap<String, Link>()
         val sensors = HashMap<String, Pair<String, String>>()
         if (plan != null) {
-            for ((kind, key) in listOf("light" to "lights", "ac" to "acs", "fan" to "fans", "cover" to "curtains", "rack" to "racks", "vacuum" to "vacuums")) {
+            for ((kind, key) in listOf("light" to "lights", "ac" to "acs", "fan" to "fans", "cover" to "curtains", "rack" to "racks", "vacuum" to "vacuums", "humidifier" to "climates")) {
                 for (device in plan.objects(key)) {
                     val id = device.string("id") ?: continue
                     val sensor = sensorLink(device.optJSONObject("sensor"))
@@ -223,7 +223,7 @@ class DeviceHub(
         val fromServices = servicePart.await()
         if (fromTuya == null && fromServices == null) return@coroutineScope null
         val merged = JSONObject()
-        for (key in listOf("lights", "acs", "fans", "curtains", "racks", "vacuums", "features")) {
+        for (key in listOf("lights", "acs", "fans", "curtains", "racks", "vacuums", "climates", "features")) {
             val section = fromTuya?.optJSONObject(key)?.copy() ?: JSONObject()
             val more = fromServices?.optJSONObject(key) ?: JSONObject()
             for (id in more.keyList()) {
@@ -254,6 +254,7 @@ class DeviceHub(
         val curtains = JSONObject()
         val racks = JSONObject()
         val vacuums = JSONObject()
+        val climates = JSONObject()
         val features = JSONObject()
         for ((id, link) in serviceLinks) {
             val reading = readings[link.service]?.get(link.id)
@@ -275,6 +276,14 @@ class DeviceHub(
                 if (reading?.online != false) reading?.vacuum?.let { vacuums.put(id, it) }
                 reading?.features?.let { features.put(id, it) }
             }
+            if (link.kind == DeviceKind.HUMIDIFIER) {
+                if (reading?.online != false) {
+                    // A unit that is really a `switch` (many Tuya dehumidifiers are) reports
+                    // through `reading.light`; a real `humidifier` entity has its own reading.
+                    (reading?.humidifier ?: reading?.light)?.let { climates.put(id, it) }
+                }
+                reading?.features?.let { features.put(id, it) }
+            }
             if (link.kind == DeviceKind.AC) {
                 val ac = if (reading?.online == false) JSONObject() else reading?.ac?.copy() ?: JSONObject()
                 link.sensor?.let { (service, sensor) -> readings[service]?.get(sensor)?.temperature }?.let { ac.put("roomTemp", it) }
@@ -285,7 +294,7 @@ class DeviceHub(
         for ((id, sensor) in tuyaSensors) {
             readings[sensor.first]?.get(sensor.second)?.temperature?.let { acs.put(id, jsonOf("roomTemp" to it)) }
         }
-        return jsonOf("lights" to lights, "acs" to acs, "fans" to fans, "curtains" to curtains, "racks" to racks, "vacuums" to vacuums, "features" to features)
+        return jsonOf("lights" to lights, "acs" to acs, "fans" to fans, "curtains" to curtains, "racks" to racks, "vacuums" to vacuums, "climates" to climates, "features" to features)
     }
 
     private suspend fun pollCloud(): JSONObject? {

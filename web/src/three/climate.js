@@ -17,8 +17,8 @@ const GLASS = '#b9c2cc';
 const DARK = '#2f343b';
 const WATER = '#79d8e8';
 const DRY = '#7fe3c8';       // the cool, dry air a dehumidifier gives off
-const AIR = '#a6f2c8';       // the stream it blows out of the grille
-const MIST = '#cfeee9';      // the plume a humidifier gives off
+const AIR = '#22ff8f';       // the stream it blows out of the grille
+const MIST = '#a8f6ff';      // the plume a humidifier gives off
 
 export const CLIMATE_TYPES = ['dehumidifier', 'humidifier'];
 export const CLIMATE_MODES = ['auto', 'continuous', 'sleep'];
@@ -89,7 +89,7 @@ export class ClimateUnit {
     this.mode = cfg.mode || 'auto';
     this.humidity = cfg.humidity ?? 58;
     this.water = cfg.tank ?? 0.65;   // 0…1, how full the tank is
-    this.waterRate = this.type === 'dehumidifier' ? 0.0032 : -0.0058;
+    this.waterRate = this.type === 'dehumidifier' ? 0.0032 : -0.00008;
 
     this.group = new THREE.Group();
     this.group.position.set(cfg.pos[0], 0, cfg.pos[1]);
@@ -216,7 +216,7 @@ export class ClimateUnit {
   buildMotes() {
     // Dehumidifier: a few drops falling inside the tank window, so the collecting reads even
     // when the water line has barely moved. Humidifier: the mist plume itself.
-    this.moteCount = this.type === 'dehumidifier' ? 12 : 110;
+    this.moteCount = this.type === 'dehumidifier' ? 12 : 220;
     // Hashed per-mote randomness, not another golden-ratio sequence: with `phase` and `rate`
     // both taken from i * irrational the two stay correlated, every mote advances by the same
     // fraction, and the plume collapses into a single band instead of a column.
@@ -235,7 +235,7 @@ export class ClimateUnit {
     geo.setAttribute('color', new THREE.BufferAttribute(this.moteCol, 3).setUsage(THREE.DynamicDrawUsage));
     this.moteColor = new THREE.Color(this.type === 'humidifier' ? MIST : DRY);
     this.motesMesh = new THREE.Points(geo, new THREE.PointsMaterial({
-      size: this.type === 'humidifier' ? 0.085 : 0.028,
+      size: this.type === 'humidifier' ? 0.140 : 0.028,
       sizeAttenuation: true, map: glow(), vertexColors: true,
       transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false,
     }));
@@ -247,7 +247,7 @@ export class ClimateUnit {
   /** The air a dehumidifier blows up out of its grille: a short, widening, lightly swirling
    *  column of motes above the lid, on top of the drops falling behind the tank window. */
   buildAir() {
-    this.airCount = 44;
+    this.airCount = 260;
     this.airParts = Array.from({ length: this.airCount }, (_, i) => ({
       phase: hash(i + 131),
       angle: hash(i + 149) * Math.PI * 2,
@@ -263,7 +263,7 @@ export class ClimateUnit {
     geo.setAttribute('position', new THREE.BufferAttribute(this.airPos, 3).setUsage(THREE.DynamicDrawUsage));
     geo.setAttribute('color', new THREE.BufferAttribute(this.airCol, 3).setUsage(THREE.DynamicDrawUsage));
     this.airMesh = new THREE.Points(geo, new THREE.PointsMaterial({
-      size: 0.034, sizeAttenuation: true, map: glow(), vertexColors: true,
+      size: 0.110, sizeAttenuation: true, map: glow(), vertexColors: true,
       transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false,
     }));
     this.airMesh.frustumCulled = false;
@@ -280,11 +280,11 @@ export class ClimateUnit {
       const p = this.airParts[i];
       const t = (p.phase + this.flow * p.speed) % 1;
       const a = p.angle + t * p.swirl;
-      const rad = p.radius * (0.5 + t * 1.05);
+      const rad = p.radius * (0.45 + t * 1.80);
       pos[i * 3] = Math.cos(a) * rad;
-      pos[i * 3 + 1] = 0.605 + t * 0.42;
+      pos[i * 3 + 1] = 0.605 + t * 0.72;
       pos[i * 3 + 2] = Math.sin(a) * rad;
-      const fade = Math.pow(Math.sin(Math.PI * Math.min(1, t)), 0.75) * p.bright * 0.45 * this.level;
+      const fade = Math.pow(Math.sin(Math.PI * Math.min(1, t)), 0.45) * p.bright * 1.20 * this.level;
       col[i * 3] = c.r * fade; col[i * 3 + 1] = c.g * fade; col[i * 3 + 2] = c.b * fade;
     }
     this.airMesh.geometry.attributes.position.needsUpdate = true;
@@ -317,7 +317,7 @@ export class ClimateUnit {
     const pull = this.mode === 'sleep' ? 0.06 : this.mode === 'continuous' ? 0.22 : 0.12;
     this.humidity += (this.target - this.humidity) * Math.min(1, dt * pull);
     if (this.type === 'dehumidifier') this.water = Math.min(1, this.water + dt * this.waterRate * (this.mode === 'sleep' ? 0.6 : 1));
-    else this.water = Math.max(0, this.water + dt * this.waterRate * (this.mode === 'sleep' ? 0.6 : 1));
+    else this.water = Math.max(this.on ? 0.05 : 0, this.water + dt * this.waterRate * (this.mode === 'sleep' ? 0.6 : 1));
     // A full tank stops a humidifier, an empty one stops a dehumidifier: the store is told,
     // so the panel agrees with the model instead of drifting apart.
     if (this.type === 'humidifier' && this.water <= 0 && this.on) this.onWater?.('empty');
@@ -354,11 +354,11 @@ export class ClimateUnit {
       if (humid) {
         // Up and out: a column that widens as it leaves the spout, swaying a little.
         const sway = Math.sin(this.clock * 1.1 + m.wobble) * 0.02 * t;
-        const rad = m.radius * (1 + t * 1.9);
+        const rad = m.radius * (1 + t * 2.2);
         pos[i * 3] = Math.cos(m.angle) * rad + sway;
-        pos[i * 3 + 1] = spoutY + t * 0.66;
+        pos[i * 3 + 1] = spoutY + t * 0.90;
         pos[i * 3 + 2] = Math.sin(m.angle) * rad + sway;
-        const fade = Math.pow(Math.sin(Math.PI * Math.min(1, t)), 0.7) * m.bright * 0.5;
+        const fade = Math.pow(Math.sin(Math.PI * Math.min(1, t)), 0.45) * m.bright * 1.00;
         col[i * 3] = c.r * fade; col[i * 3 + 1] = c.g * fade; col[i * 3 + 2] = c.b * fade;
       } else {
         // Down inside the window: a short fall, fading as it reaches the water.

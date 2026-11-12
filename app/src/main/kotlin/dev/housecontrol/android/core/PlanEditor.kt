@@ -55,7 +55,7 @@ class PlanEditor(plan: JSONObject) {
             val out = mutableListOf<Item>()
             for ((kind, key) in listOf(
                 DeviceKind.LIGHT to "lights", DeviceKind.AC to "acs", DeviceKind.FAN to "fans", DeviceKind.COVER to "curtains",
-                DeviceKind.VACUUM to "vacuums", DeviceKind.RACK to "racks",
+                DeviceKind.VACUUM to "vacuums", DeviceKind.RACK to "racks", DeviceKind.HUMIDIFIER to "climates",
             )) {
                 for (device in plan.objects(key)) {
                     val id = device.string("id") ?: continue
@@ -80,7 +80,7 @@ class PlanEditor(plan: JSONObject) {
     // MARK: - Linking
 
     private fun find(id: String): JSONObject? {
-        for (key in listOf("lights", "acs", "fans", "curtains", "racks", "vacuums")) {
+        for (key in listOf("lights", "acs", "fans", "curtains", "racks", "vacuums", "climates")) {
             plan.objects(key).firstOrNull { it.optString("id") == id }?.let { return it }
         }
         return null
@@ -142,7 +142,8 @@ class PlanEditor(plan: JSONObject) {
     // MARK: - Adding devices
 
     private val allIds: MutableSet<String>
-        get() = listOf("rooms", "lights", "acs", "scenes").flatMap { key -> plan.objects(key).mapNotNull { it.string("id") } }.toMutableSet()
+        get() = listOf("rooms", "lights", "acs", "fans", "curtains", "racks", "vacuums", "climates", "scenes")
+            .flatMap { key -> plan.objects(key).mapNotNull { it.string("id") } }.toMutableSet()
 
     private fun uniqueId(base: String, taken: Set<String>): String {
         if (base !in taken) return base
@@ -169,6 +170,7 @@ class PlanEditor(plan: JSONObject) {
         val acs = plan.optJSONArray("acs") ?: JSONArray()
         val newLights = devices.filter { it.optString("kind") == "light" }
         val newACs = devices.filter { it.optString("kind") == "ac" }
+        val newHumidifiers = devices.filter { it.optString("kind") == "humidifier" }
         val added = mutableListOf<String>()
 
         // Lamps on a grid inside the room, away from the lamps already there.
@@ -214,10 +216,29 @@ class PlanEditor(plan: JSONObject) {
             acs.put(ac)
             added += id
         }
+        // Dehumidifiers and humidifiers stand along the floor, clear of the ACs' walls.
+        val climates = plan.optJSONArray("climates") ?: JSONArray().also { plan.put("climates", it) }
+        val existingUnits = climates.objects().count { it.optString("room") == room }
+        newHumidifiers.forEachIndexed { n, device ->
+            val slot = existingUnits + n
+            val cx = x + w * ((slot % 3) + 0.5) / 3
+            val cz = z + d * 0.62
+            val id = uniqueId("$room.humidifier", taken).also { taken += it }
+            val detail = device.optString("detail")
+            val unit = jsonOf(
+                "id" to id, "name" to (device.string("name") ?: "Dehumidifier"), "room" to room,
+                "type" to (if (detail.contains("dehumidifier")) "dehumidifier" else "humidifier"),
+                "pos" to listOf(fix(cx), fix(cz)), "rot" to 0.0,
+                "target" to 50, "mode" to "auto", "humidity" to 58, "tank" to 0.65,
+            )
+            climates.put(unit)
+            added += id
+        }
         plan.put("lights", lights)
         plan.put("acs", acs)
+        plan.put("climates", climates)
         // Link each new item to its device.
-        added.zip(newLights + newACs).forEach { (id, device) -> link(id, device) }
+        added.zip(newLights + newACs + newHumidifiers).forEach { (id, device) -> link(id, device) }
         return added
     }
 

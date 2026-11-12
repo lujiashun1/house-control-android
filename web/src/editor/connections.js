@@ -313,7 +313,10 @@ export function createConnections({ rerender, toast, usedBy, onOpen }) {
     const id = `${d.id || ''}`;
     if (kind === 'fan') return id.startsWith('fan.') || (id.startsWith('switch.') && /fan|风扇|風扇|ventil/i.test(`${d.name || ''} ${d.detail || ''}`));
     if (kind === 'cover') return id.startsWith('cover.');
-    if (kind === 'humidifier') return id.startsWith('humidifier.');
+    if (kind === 'humidifier') {
+      return id.startsWith('humidifier.') ||
+        (id.startsWith('switch.') && /humidif|dehumidif|除湿|加湿|抽湿/i.test(`${d.name || ''} ${d.detail || ''}`));
+    }
     return false;
   };
 

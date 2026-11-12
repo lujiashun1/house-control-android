@@ -183,6 +183,7 @@ private fun ItemRow(item: PlanEditor.Item, device: RealDevice?, onClick: () -> U
         DeviceKind.COVER -> R.drawable.lucide_blinds
         DeviceKind.RACK -> R.drawable.lucide_shirt
         DeviceKind.VACUUM -> R.drawable.lucide_bot
+        DeviceKind.HUMIDIFIER -> R.drawable.lucide_droplets
         else -> R.drawable.lucide_lamp_ceiling
     }
     val tint = link?.let { serviceTint(it.service) } ?: Palette.faint
@@ -207,7 +208,12 @@ private fun DevicePicker(
                 if (kind == "sensor") "The AC's own reading, or a simulated one" else "Shown in the 3D view, controls nothing",
                 Palette.faint, onClick = { choose(null) }) { Check(current == null) }
         }
-        val candidates = devices.filter { it.kind == kind }
+        // Many dehumidifiers reach Home Assistant as a plain switch; offer those by name too,
+        // the same way the web editor offers switch-shaped fans.
+        val candidates = devices.filter {
+            it.kind == kind || (kind == "humidifier" && it.kind == "light" && it.deviceId.startsWith("switch.") &&
+                Regex("humidif|dehumidif|除湿|加湿|抽湿", RegexOption.IGNORE_CASE).containsMatchIn(it.name))
+        }
         if (candidates.isEmpty()) Footnote(when (kind) {
             "sensor" -> "No temperature sensors on the connected platforms."
             "ac" -> "No air conditioners on the connected platforms."
@@ -215,6 +221,7 @@ private fun DevicePicker(
             "cover" -> "No covers on the connected platforms."
             "vacuum" -> "No robot vacuums on the connected platforms."
             "rack" -> "No covers on the connected platforms."
+            "humidifier" -> "No dehumidifiers or humidifiers on the connected platforms. A unit that is a switch is listed when its name says dehumidifier / 除湿."
             else -> "No lights or plugs on the connected platforms."
         })
         for ((service, list) in candidates.groupBy { it.service }) {
@@ -265,6 +272,7 @@ private fun AddDevicesScreen(
                         "fan" -> R.drawable.lucide_fan
                         "cover" -> R.drawable.lucide_blinds
                         "vacuum" -> R.drawable.lucide_bot
+                        "humidifier" -> R.drawable.lucide_droplets
                         else -> R.drawable.lucide_lightbulb
                     }, device.name,
                         listOf(serviceTitle(device.service), device.detail).filter { it.isNotEmpty() }.joinToString(" · "),

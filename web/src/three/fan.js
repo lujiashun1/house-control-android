@@ -21,7 +21,7 @@ const FRONT_Z = 0.118;
 
 // How far the air visibly travels, metres, and how many motes carry it.
 const WIND_REACH = 1.7;
-const WIND_MOTES = 260;
+const WIND_MOTES = 320;
 
 /* ---------- parts ---------- */
 
@@ -253,7 +253,7 @@ export class FanUnit {
 
     // Motes carried out of the guard. They live in the tilt group, so they turn and tilt
     // with the head: the wind goes where the fan points, including through a sweep.
-    this.windColor = new THREE.Color(cfg.windColor || '#4ee79b');
+    this.windColor = new THREE.Color(cfg.windColor || '#19e676');
     this.windPhase = 0;
     this.clock = 0;
     this.windSeeds = Array.from({ length: WIND_MOTES }, (_, i) => {
@@ -274,7 +274,7 @@ export class FanUnit {
     windGeo.setAttribute('position', new THREE.BufferAttribute(this.windPos, 3).setUsage(THREE.DynamicDrawUsage));
     windGeo.setAttribute('color', new THREE.BufferAttribute(this.windCol, 3).setUsage(THREE.DynamicDrawUsage));
     this.wind = new THREE.Points(windGeo, new THREE.PointsMaterial({
-      size: 0.072, sizeAttenuation: true, map: glow(), vertexColors: true,
+      size: 0.140, sizeAttenuation: true, map: glow(), vertexColors: true,
       transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false,
     }));
     this.wind.frustumCulled = false;
@@ -342,12 +342,12 @@ export class FanUnit {
       const t = (s.phase + this.windPhase * s.rate) % 1;
       const swirl = t * 0.55 + Math.sin(this.clock * 1.6 + s.wobble) * 0.05;
       const ang = s.angle + swirl;
-      const rad = s.radius * (1 + 0.18 * t);   // spreads a touch, never wider than the guard
+      const rad = s.radius * (1 + 0.28 * t);   // spreads a touch, never wider than the guard
       pos[i * 3] = Math.cos(ang) * rad;
       pos[i * 3 + 1] = Math.sin(ang) * rad;
       pos[i * 3 + 2] = t * WIND_REACH;
       // Fade in off the guard and out at the far end.
-      const fade = Math.pow(Math.sin(Math.PI * t), 0.55) * strength * s.bright * 0.58;
+      const fade = Math.pow(Math.sin(Math.PI * t), 0.40) * strength * s.bright * 1.10;
       col[i * 3] = c.r * fade;
       col[i * 3 + 1] = c.g * fade;
       col[i * 3 + 2] = c.b * fade;

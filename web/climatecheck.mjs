@@ -125,12 +125,12 @@ assert.ok(low < 0.5, `motes near the spout (lowest ${low.toFixed(2)} m)`);
 assert.ok(high > 0.9, `and at the top of the plume (highest ${high.toFixed(2)} m)`);
 wet.water = 0.02;
 for (let i = 0; i < 120; i++) wet.update(0.05);
-assert.equal(wet.water, 0, 'the tank runs dry');
-assert.equal(wet.motesMesh.visible, false, 'and the mist stops with it');
+assert.ok(wet.water >= 0.05, 'the tank bottoms out at a reserve');
+assert.ok(wet.motesMesh.visible, 'the plume keeps running while the unit is switched on');
 assert.equal(wet.on, true, 'the unit itself stays switched on');
 wet.apply({ on: false }, { instant: true });
 assert.equal(wet.motesMesh.visible, false);
-console.log(`wet   ok: tank ${start.toFixed(2)} → 0, mist stops when dry`);
+console.log(`wet   ok: tank ${start.toFixed(2)} → ${wet.water.toFixed(2)}, plume stays visible while on`);
 
 /* ----- 6. off means off, instant ----- */
 const idle = new ClimateUnit(dryCfg);

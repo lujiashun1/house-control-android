@@ -44,7 +44,9 @@ interface DeviceService {
 }
 
 enum class DeviceKind(val raw: String) {
-    LIGHT("light"), AC("ac"), FAN("fan"), COVER("cover"), RACK("rack"), VACUUM("vacuum"), SENSOR("sensor");
+    LIGHT("light"), AC("ac"), FAN("fan"), COVER("cover"), RACK("rack"), VACUUM("vacuum"),
+    /** A dehumidifier or a humidifier (Home Assistant's `humidifier` domain). */
+    HUMIDIFIER("humidifier"), SENSOR("sensor");
 
     companion object {
         fun of(raw: String?) = entries.firstOrNull { it.raw == raw }
@@ -96,6 +98,8 @@ data class DeviceReading(
     var cover: JSONObject? = null,
     /** What a robot vacuum reports: `status` (cleaning/paused/returning/docked/error), `battery`. */
     var vacuum: JSONObject? = null,
+    /** What a dehumidifier / humidifier reports: `on`, `target` (target humidity %), `humidity` (current %), `mode`. */
+    var humidifier: JSONObject? = null,
     /** What an AC can do: `modes`, `fans`, `swing`, `sleep`, `eco` (see the store's acFeatures). */
     var features: JSONObject? = null,
     /** A temperature sensor's reading in °C. */

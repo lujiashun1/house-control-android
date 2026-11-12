@@ -297,11 +297,13 @@ export function createStore(config) {
   // A dehumidifier or a humidifier: on, a humidity target between 30 and 80 %, and one of
   // three modes. The wording is the panel's own, not Home Assistant's (its `humidifier`
   // domain has no such fixed modes); a linked unit sends `on` and `target` only.
-  function sanitizeClimate(patch) {
+  function sanitizeClimate(patch, { remote = false } = {}) {
     const out = {};
     if ('on' in patch) out.on = Boolean(patch.on);
     if ('target' in patch) out.target = clamp(Math.round(Number(patch.target)), 30, 80);
     if ('mode' in patch && CLIMATE_MODES.includes(patch.mode)) out.mode = patch.mode;
+    // Only a real unit reports the humidity it measured; a simulated one derives it from the model.
+    if (remote && 'humidity' in patch) out.humidity = clamp(Math.round(Number(patch.humidity)), 0, 100);
     return out;
   }
 
@@ -309,7 +311,7 @@ export function createStore(config) {
     const cur = state.climates[id];
     const cfg = climateCfg.get(id);
     if (!cur) return false;
-    const clean = sanitizeClimate(patch);
+    const clean = sanitizeClimate(patch, { remote });
     const diff = Object.fromEntries(Object.entries(clean).filter(([k, v]) => cur[k] !== v));
     if (!Object.keys(diff).length) return false;
     const before = Object.fromEntries(Object.keys(diff).map((k) => [k, cur[k]]));
@@ -495,7 +497,7 @@ export function createStore(config) {
     },
 
     /** Reports the state again, for a view that has only just started. */
-    share() { post('state', { lights: state.lights, acs: state.acs, fans: state.fans, curtains: state.curtains, scene: state.scene }); },
+    share() { post('state', { lights: state.lights, acs: state.acs, fans: state.fans, curtains: state.curtains, climates: state.climates, scene: state.scene }); },
 
     // The state of another view of this home (see emit). Nothing goes to the devices:
     // the view where the change was made has already sent it.
@@ -507,6 +509,7 @@ export function createStore(config) {
       for (const [id, s] of Object.entries(other.curtains || {})) any = writeCurtain(id, s, { remote: true }) || any;
       for (const [id, s] of Object.entries(other.vacuums || {})) any = writeVacuum(id, s, { remote: true }) || any;
       for (const [id, s] of Object.entries(other.racks || {})) any = writeRack(id, s, { remote: true }) || any;
+      for (const [id, s] of Object.entries(other.climates || {})) any = writeClimate(id, s, { remote: true }) || any;
       const scene = other.scene ?? null;
       if (scene !== state.scene) { state.scene = scene; any = true; }
       if (any) emit({ type: 'bulk', remote: true, adopted: true, source: other.source || null });
@@ -521,6 +524,7 @@ export function createStore(config) {
       for (const [id, c] of Object.entries(update.curtains || {})) any = writeCurtain(id, c, { remote: true }) || any;
       for (const [id, v] of Object.entries(update.vacuums || {})) any = writeVacuum(id, v, { remote: true }) || any;
       for (const [id, r] of Object.entries(update.racks || {})) any = writeRack(id, r, { remote: true }) || any;
+      for (const [id, c] of Object.entries(update.climates || {})) any = writeClimate(id, c, { remote: true }) || any;
       for (const [id, f] of Object.entries(update.features || {})) {
         if (state.acs[id] && JSON.stringify(features[id]) !== JSON.stringify(f)) { features[id] = f; any = true; }
         if (state.fans[id] && JSON.stringify(fanFeatures[id]) !== JSON.stringify(f)) { fanFeatures[id] = f; any = true; }

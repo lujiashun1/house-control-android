@@ -51,7 +51,7 @@ console.log('guard ok: unknown room, missing pos, duplicate id all thrown');
 /* ----- 3. the store keeps a fan local ----- */
 globalThis.localStorage.map.set('house-control:state:v1', JSON.stringify({ home: 'Home', fans: { 'living.fan': { on: true, speed: 4 } } }));
 const store = createStore(config);
-assert.deepEqual(store.state.fans['living.fan'], { on: true, speed: 4, oscillate: false }, 'restored from storage');
+assert.deepEqual(store.state.fans['living.fan'], { on: true, speed: 4, percent: 40, oscillate: false, preset: null, direction: 'forward' }, 'restored from storage');
 store.setFan('living.fan', { speed: 9 });
 assert.equal(store.state.fans['living.fan'].speed, 5, 'speed clamped to 5');
 store.setFan('living.fan', { speed: 0 });

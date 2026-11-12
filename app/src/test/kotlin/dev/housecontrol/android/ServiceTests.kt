@@ -4,6 +4,7 @@ import dev.housecontrol.android.core.ColorMath
 import dev.housecontrol.android.core.DeviceKind
 import dev.housecontrol.android.core.FanNames
 import dev.housecontrol.android.core.HomeAssistantService
+import dev.housecontrol.android.core.HumidifierModes
 import dev.housecontrol.android.core.HueService
 import dev.housecontrol.android.core.ServiceFailure
 import org.json.JSONArray
@@ -89,6 +90,36 @@ class ServiceTests {
         val range = HomeAssistantService.reading(json("""{"entity_id":"climate.ecobee","state":"heat_cool","attributes":{"hvac_modes":["off","heat_cool"],"target_temp_low":21,"target_temp_high":24}}"""))
         assertEquals("auto", range.ac!!.get("mode"))
         assertEquals(23.0, range.ac!!.getDouble("target"), 0.0)
+    }
+
+    @Test fun homeAssistantListsAndDrivesHumidifiers() {
+        val unit = HomeAssistantService.device(json("""{"entity_id":"humidifier.cellar","state":"on","attributes":{
+            "friendly_name":"Cellar dehumidifier","device_class":"dehumidifier","min_humidity":30,"max_humidity":80,
+            "available_modes":["normal","sleep"],"humidity":46,"target_humidity":50}}"""))!!
+        assertEquals(DeviceKind.HUMIDIFIER, unit.kind)
+        assertEquals(30.0 to 80.0, unit.range)
+        assertTrue(unit.detail.contains("dehumidifier"))
+        // A switch whose name says what it is becomes a unit; any other switch stays a lamp.
+        assertEquals(DeviceKind.HUMIDIFIER, HomeAssistantService.device(json("""{"entity_id":"switch.dehumidifier","state":"on","attributes":{"friendly_name":"Dehumidifier"}}"""))!!.kind)
+        assertEquals(DeviceKind.LIGHT, HomeAssistantService.device(json("""{"entity_id":"switch.lamp","state":"on","attributes":{"friendly_name":"Desk lamp"}}"""))!!.kind)
+
+        val reading = HomeAssistantService.reading(json("""{"entity_id":"humidifier.cellar","state":"on","attributes":{
+            "min_humidity":30,"max_humidity":80,"available_modes":["normal","sleep"],"mode":"normal",
+            "humidity":46,"target_humidity":50}}"""))
+        val humidifier = reading.humidifier!!
+        assertEquals(true, humidifier.get("on"))
+        assertEquals(50.0, humidifier.getDouble("target"), 0.0)
+        assertEquals(46.0, humidifier.getDouble("humidity"), 0.0)
+        assertEquals("continuous", humidifier.get("mode"))
+        assertEquals(JSONArray(listOf("continuous", "sleep")).toString(), reading.features!!.getJSONArray("modes").toString())
+
+        val modes = HumidifierModes.table(listOf("normal", "sleep"))
+        assertEquals(mapOf("continuous" to "normal", "sleep" to "sleep"), modes)
+        val calls = HomeAssistantService.calls("humidifier.cellar", json("""{"on":true,"target":45,"mode":"sleep"}"""), JSONObject(), emptyMap(), emptyMap(), modes)
+        assertEquals(listOf("turn_on", "set_humidity", "set_mode"), calls.map { it.service })
+        assertEquals(45, calls[1].data.getInt("humidity"))
+        assertEquals("sleep", calls[2].data.getString("mode"))
+        assertEquals(listOf("turn_off"), HomeAssistantService.calls("humidifier.cellar", json("""{"on":false}"""), JSONObject(), emptyMap(), emptyMap(), modes).map { it.service })
     }
 
     @Test fun homeAssistantBuildsServiceCalls() {
