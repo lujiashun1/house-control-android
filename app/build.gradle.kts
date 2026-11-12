@@ -13,7 +13,7 @@ val webAssets = layout.buildDirectory.dir("generated/web-assets")
 val npmInstall by tasks.registering(Exec::class) {
     description = "Installs the web UI's npm packages."
     workingDir = webDir.asFile
-    commandLine("npm", "ci", "--no-audit", "--no-fund")
+    commandLine("npm.cmd", "ci", "--no-audit", "--no-fund")
     inputs.file(webDir.file("package-lock.json"))
     outputs.dir(webDir.dir("node_modules"))
 }
@@ -22,7 +22,7 @@ val buildWeb by tasks.registering(Exec::class) {
     description = "Builds the web UI (Three.js scene, panel and editor) with Vite."
     dependsOn(npmInstall)
     workingDir = webDir.asFile
-    commandLine("npm", "run", "build")
+    commandLine("npm.cmd", "run", "build")
     inputs.dir(webDir.dir("src"))
     inputs.dir(webDir.dir("public"))
     inputs.files(webDir.file("index.html"), webDir.file("vite.config.js"), webDir.file("package-lock.json"))
