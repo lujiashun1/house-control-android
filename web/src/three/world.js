@@ -363,6 +363,7 @@ export function createWorld(canvas, config, store, { onHover, onPick, onLevel = 
     else if (change.type === 'ac') acs.get(change.id).apply(store.state.acs[change.id]);
     else if (change.type === 'fan') fans.get(change.id).apply(store.state.fans?.[change.id]);
     else if (change.type === 'curtain') curtains.get(change.id).apply(store.state.curtains?.[change.id]);
+    else if (change.type === 'curtain-width') curtains.get(change.id)?.setWidth(store.curtainCfg.get(change.id)?.width);
     else if (change.type === 'vacuum') vacuums.get(change.id).apply(store.state.vacuums?.[change.id]);
     else if (change.type === 'rack') racks.get(change.id).apply(store.state.racks?.[change.id]);
     else syncAll();

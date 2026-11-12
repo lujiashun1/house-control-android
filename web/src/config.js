@@ -148,19 +148,26 @@ export function normalize(raw) {
     };
   });
 
-  // A curtain hangs on a wall of a room: a rod, a drop of cloth and two panels that gather
-  // aside as it opens. Its colour and sheerness are runtime state, not plan fields.
+  // A curtain is a rod, a drop of cloth and two panels that gather aside as it opens. It used
+  // to be pinned to a wall of its room; it is now placed freely, so the plan position is the
+  // real one and `rot` is the angle the set faces. Its colour and sheerness are runtime state.
   const curtains = (raw.curtains || []).map((c) => {
     unique(c.id, 'A curtain');
     need(roomIds.has(c.room), `Curtain "${c.id}" refers to unknown room "${c.room}"`);
     need(isPoint(c.pos), `Curtain "${c.id}" needs "pos": [x, z]`);
-    need(WALLS.includes(c.wall), `Curtain "${c.id}" needs "wall": one of ${WALLS.join(', ')}`);
-    need((c.width ?? 2) > 0.4, `Curtain "${c.id}" needs a "width" over 0.4 m`);
+    need(c.rot === undefined || Number.isFinite(c.rot), `Curtain "${c.id}" has a "rot" that is not a number`);
+    need(c.wall === undefined || WALLS.includes(c.wall), `Curtain "${c.id}" has an unknown "wall": ${c.wall}`);
+    const width = c.width ?? 2;
+    need(width >= 0.4 && width <= 8, `Curtain "${c.id}" needs a "width" between 0.4 and 8 m`);
     need((c.height ?? 2.2) > 0.6, `Curtain "${c.id}" needs a "height" over 0.6 m`);
+    // A plan that only knows the wall still lands on the same angle the wall used to mean.
+    const wallRot = { north: 0, south: 180, west: 90, east: -90 };
+    const rot = Number.isFinite(c.rot) ? c.rot : wallRot[c.wall] ?? 0;
     return {
       ...c,
       name: c.name || c.id,
-      width: c.width ?? 2,
+      rot,
+      width,
       height: c.height ?? 2.2,
       top: c.top ?? 2.35,
       open: c.open ?? 0.3,

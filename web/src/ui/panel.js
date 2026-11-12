@@ -22,6 +22,7 @@ const VACUUM_GRADIENT = 'linear-gradient(90deg, #7a3a2e 0%, #d98a4e 46%, #4ee79b
 const RACK_GRADIENT = 'linear-gradient(90deg, #2a3038 0%, #8794a4 50%, #eef2f7 100%)';
 const CURTAIN_GRADIENT = 'linear-gradient(90deg, #2a3038 0%, #6b6f7a 48%, #efe7d8 100%)';
 const SHEER_GRADIENT = 'linear-gradient(90deg, rgba(255,255,255,.12) 0%, rgba(255,255,255,.5) 50%, #ffffff 100%)';
+const WIDTH_GRADIENT = 'linear-gradient(90deg, #39404f 0%, #8b93a3 50%, #dfe3ea 100%)';
 
 const TEMP_GRADIENT = 'linear-gradient(90deg, #2f7df6 0%, #58b4f5 34%, #f3e2c0 62%, #f6a54a 82%, #f0762c 100%)';
 const DIM_GRADIENT = 'linear-gradient(90deg, #4a4f5e 0%, #b9a98c 45%, #ffe2b0 100%)';
@@ -702,9 +703,12 @@ export function createPanel(root, config, store, { onFocus, onMenu }) {
     const speeds = VACUUM_SPEEDS.map((name) => h('button.toggle-chip.speed', {
       onclick: () => { haptic('light'); set({ speed: name }); },
     }, h('span.speed-name', VACUUM_SPEED_NAMES[name])));
+    // A plain chip, not a switch: sending a robot home is an action, not a setting, so it
+    // lights up while the robot is on its way and greys out once it is docked.
     const dock = h('button.toggle-chip', {
+      'aria-label': 'Return to dock',
       onclick: () => { haptic('medium'); store.dockVacuum(id); },
-    }, icon('homeDock', 17), 'Return to dock', h('span.switch'));
+    }, icon('homeDock', 17), 'Return to dock');
     const locate = h('button.toggle-chip', {
       onclick: () => { haptic('light'); store.locateVacuum(id); },
     }, icon('radar', 17), 'Locate');
@@ -734,6 +738,7 @@ export function createPanel(root, config, store, { onFocus, onMenu }) {
           chip.classList.toggle('on', v.speed === VACUUM_SPEEDS[i]);
         }
         dock.classList.toggle('active', v.status === 'returning');
+        dock.disabled = v.status === 'docked';
         dock.classList.toggle('hidden', v.status === 'docked');
         // Find-it only exists where the platform has a `locate` service; a simulated robot
         // has nothing to flash, so the chip stays out of the way.
@@ -808,6 +813,14 @@ export function createPanel(root, config, store, { onFocus, onMenu }) {
       compact: true, detent: 5,
       onInput: (v) => set({ opacity: v / 100 }),
     });
+    // Width is the one structural property in the sheet: the rod, the cloth and the pick box
+    // are rebuilt, which is why it is shown in metres rather than as a percentage.
+    const widthValue = h('span');
+    const width = createSlider({
+      min: 40, max: 800, step: 5, value: Math.round((cfg.width ?? 2) * 100), gradient: WIDTH_GRADIENT,
+      compact: true, detent: 10,
+      onInput: (v) => store.setCurtainWidth(id, v / 100),
+    });
     const colorLabel = h('span');
     const pad = createColorPad({ value: s().color, onInput: (c) => set({ color: c }) });
     const swatches = CLOTH_SWATCHES.map((c) => h('button.swatch', {
@@ -824,6 +837,8 @@ export function createPanel(root, config, store, { onFocus, onMenu }) {
           h('button.round', { 'aria-label': 'Close a little', onclick: () => { haptic('tick'); set({ open: Math.max(0, s().open - 0.1) }); } }, icon('minus', 18, 2.2)),
           open.el,
           h('button.round', { 'aria-label': 'Open a little', onclick: () => { haptic('tick'); set({ open: Math.min(1, s().open + 0.1) }); } }, icon('plus', 18, 2.2))),
+        h('div.field-label', h('span', 'Width'), widthValue),
+        h('div.slider-row', width.el),
         h('div.field-label', h('span', 'Sheer'), sheerValue),
         h('div.slider-row', sheer.el),
         h('div.field-label', h('span', 'Fabric colour'), colorLabel),
@@ -840,12 +855,14 @@ export function createPanel(root, config, store, { onFocus, onMenu }) {
         open.set(Math.round(c.open * 100));
         sheer.set(Math.round(c.opacity * 100));
         sheerValue.textContent = `${Math.round(c.opacity * 100)}%`;
+        width.set(Math.round((cfg.width ?? 2) * 100));
+        widthValue.textContent = `${(cfg.width ?? 2).toFixed(2)} m`;
         colorLabel.textContent = c.color.toUpperCase();
         swatches.forEach((el, i) => el.classList.toggle('selected', c.color.toLowerCase() === CLOTH_SWATCHES[i]));
         pad.set(c.color);
         // A linked curtain follows a Home Assistant `cover`: say which one, and say when it is not.
         noteText.textContent = cfg.link
-          ? `${roomName.get(cfg.room)} · ${cfg.link.service} ${cfg.link.id} · position only, colour and sheer are yours`
+          ? `${roomName.get(cfg.room)} · ${cfg.link.service} ${cfg.link.id} · position only, width, colour and sheer are yours`
           : `${roomName.get(cfg.room)} · simulated: no platform, nothing is sent`;
       },
     };

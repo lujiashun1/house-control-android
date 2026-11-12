@@ -501,7 +501,7 @@ export async function bootEditor(root) {
     if (kind === 'light') return [item.name || item.id, `${roomName(item.room)} · ${item.type}`];
     if (kind === 'ac') return [item.name || item.id, `${roomName(item.room)} · ${item.wall} wall`];
     if (kind === 'fan') return [item.name || item.id, `${roomName(item.room)} · ${fix(item.height ?? 0.95)} m`];
-    if (kind === 'curtain') return [item.name || item.id, `${roomName(item.room)} · ${item.wall} · ${fix(item.width ?? 2)} m`];
+    if (kind === 'curtain') return [item.name || item.id, `${roomName(item.room)} · ${fix(item.width ?? 2)} m · ${Math.round(item.rot ?? 0)}°`];
     if (kind === 'vacuum') return [item.name || item.id, `${roomName(item.room)} · dock at ${fix(item.pos[0])}, ${fix(item.pos[1])}`];
     if (kind === 'rack') return [item.name || item.id, `${roomName(item.room)} · ${fix(item.width ?? 1.6)} m · ${Math.round((item.open ?? 0.15) * 100)}% down`];
     if (kind === 'furniture') return [item.type, roomName(roomAt(item.pos)?.id) || '—'];
@@ -582,7 +582,7 @@ export async function bootEditor(root) {
       // A window-wide set on the far wall of the room, where the 3D view shows it.
       const [rx, rz, rw, rd] = room.rect;
       list.push({
-        id: uniqueId(`${room.id}.curtain`), name: `${room.name} curtain`, room: room.id, wall: 'north',
+        id: uniqueId(`${room.id}.curtain`), name: `${room.name} curtain`, room: room.id, rot: 0,
         pos: [fix(rx + rw / 2), fix(rz)], width: fix(Math.min(2.4, Math.max(1, rw * 0.55))), height: 2.2, top: 2.35,
         open: 0.3, color: '#e8e2d6', opacity: 0.62,
       });
@@ -667,10 +667,10 @@ export async function bootEditor(root) {
     toast('Duplicated');
   }
 
-  // Turns furniture or a lamp a quarter (or, with `step`, a little).
+  // Turns furniture, a lamp or a curtain a quarter (or, with `step`, a little).
   function rotate(step = 90) {
     const item = sel.index != null ? doc[KEYS[sel.kind]]?.[sel.index] : null;
-    if (!item || !['furniture', 'light', 'fan'].includes(sel.kind)) return;
+    if (!item || !['furniture', 'light', 'fan', 'curtain'].includes(sel.kind)) return;
     snapshot(`rotate${sel.kind}${sel.index}`);
     item.rot = (((item.rot || 0) + step) % 360 + 540) % 360 - 180;
     touch();
@@ -857,10 +857,11 @@ export async function bootEditor(root) {
         sv('path', { d: 'M-0.3 0.42v0.22M0 0.42v0.3M0.3 0.42v0.22', class: 'flow' })));
     });
 
-    // A curtain, seen from above: the rod on the wall and two panels of cloth hanging off it.
+    // A curtain, seen from above: the rod and two panels of cloth hanging off it.
+    const WALL_DEG = { north: 0, east: 90, south: 180, west: 270 };
     doc.curtains.forEach((c, i) => {
       if (!here('curtain', c)) return;
-      const rot = { north: 0, east: 90, south: 180, west: 270 }[c.wall] || 0;
+      const rot = Number.isFinite(c.rot) ? -c.rot : WALL_DEG[c.wall] || 0;
       const a = (c.width ?? 2) / 2;
       kids.push(sv('g', {
         class: `p-curtain${isSel('curtain', i) ? ' sel' : ''}`, 'data-kind': 'curtain', 'data-index': i,
@@ -1198,7 +1199,11 @@ export async function bootEditor(root) {
         v.pos = [fix(clamp(px, rx + 0.3, rx + rw - 0.3)), fix(clamp(pz, rz + 0.3, rz + rd - 0.3))];
       } else v.pos = [fix(px), fix(pz)];
     } else if (drag.kind === 'curtain') {
-      snapAC(doc.curtains[drag.index], [px, pz]);   // same rule: it hangs on a wall of its room
+      // A curtain is placed freely now: it follows the pointer and only its room is re-read.
+      const c = doc.curtains[drag.index];
+      c.pos = [fix(drag.pos[0] + dx), fix(drag.pos[1] + dz)];
+      const room = roomAt(c.pos);
+      if (room) c.room = room.id;
     } else {
       const item = doc[KEYS[drag.kind]][drag.index];
       item.pos = [fix(drag.pos[0] + dx), fix(drag.pos[1] + dz)];
@@ -1502,13 +1507,15 @@ export async function bootEditor(root) {
       nodes.push(section('Curtain',
         bind('Name', text(), prop(item, 'name', '')),
         row(bind('Room', choice(doc.rooms.map((r) => [r.id, r.name || r.id])), { ...prop(item, 'room'), event: 'change' }),
-          bind('Hangs on wall', choice(WALLS), { ...prop(item, 'wall', 'north'), event: 'change' }))),
+          bind('Rotation, °', number(15), { ...prop(item, 'rot', 0), parse: parseNum }))),
       section('Size, m',
         row(bind('Width', number(0.1), { ...prop(item, 'width', 2), parse: parseNum }),
           bind('Drop', number(0.1), { ...prop(item, 'height', 2.2), parse: parseNum })),
         row(bind('Rod height', number(0.1), { ...prop(item, 'top', 2.35), parse: parseNum }),
           bind('Open at start, 0-1', number(0.05), { ...prop(item, 'open', 0.3), parse: parseNum })),
-        h('p.note', 'Left empty, the rod sits at 2.35 m and the cloth is 2.2 m long. Drag the set on the plan and it snaps to the nearest wall of its room.')),
+        h('div.fields',
+          h('button.btn', { onclick: () => rotate(90) }, icon('rotateCw', 14, 2.2), 'Turn 90°')),
+        h('p.note', 'Width is the span of the rod, 0.4-8 m; changing it re-hangs the cloth at once. The set no longer snaps to a wall: drag it anywhere on the plan, and use Rotation to face a window.')),
       section('Cloth',
         row(bind('Colour', text(), prop(item, 'color', '#e8e2d6')),
           bind('Sheer, 0-1', number(0.05), { ...prop(item, 'opacity', 0.62), parse: parseNum })),

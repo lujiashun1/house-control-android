@@ -1,14 +1,19 @@
-// A pair of pleated curtain panels hanging from a rod on a wall. They gather to the sides as
-// they open, and the cloth is a translucent material whose colour and opacity the panel sets.
+// A pair of pleated curtain panels hanging from a rod. They gather to the sides as they open,
+// and the cloth is a translucent material whose colour and opacity the panel sets. The set is
+// freely placed (no wall snapping) and its width can be changed while the home runs.
 import * as THREE from 'three';
 import { box, cyl, mat } from './kit.js';
 
+// Old plans stored a wall instead of an angle; keep reading them, but positions are free now.
 const WALL_ROT = { north: 0, south: Math.PI, west: Math.PI / 2, east: -Math.PI / 2 };
 
-const ROD_Z = 0.10;   // how far the rod stands off the wall, metres
+const ROD_Z = 0.10;   // how far the rod stands off the cloth's hanging line, metres
 const PLEATS = 5;     // folds across the full width
 const FOLD = 0.055;   // half depth of one fold
 const GATHER = 0.12;  // how narrow a panel gets when fully open
+
+export const CURTAIN_MIN_WIDTH = 0.4;
+export const CURTAIN_MAX_WIDTH = 8;
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 
@@ -53,29 +58,20 @@ export class CurtainUnit {
     this.openGoal = this.open;
     this.opacity = clamp(cfg.opacity, 0.06, 1);
     this.opacityGoal = this.opacity;
+    this.width = clamp(cfg.width ?? 2, CURTAIN_MIN_WIDTH, CURTAIN_MAX_WIDTH);
+    this.drop = cfg.height ?? 2.2;
+    // `rot` is the angle the set is turned to, in degrees; plans written before this field
+    // existed carry a wall instead, which still resolves to the same angle.
+    this.rot = Number.isFinite(cfg.rot)
+      ? cfg.rot
+      : ((WALL_ROT[cfg.wall] ?? 0) * 180) / Math.PI;
 
     this.group = new THREE.Group();
-    this.group.position.set(cfg.pos[0], cfg.top, cfg.pos[1]);
-    this.group.rotation.y = WALL_ROT[cfg.wall] || 0;
+    this.group.position.set(cfg.pos[0], cfg.top ?? 2.35, cfg.pos[1]);
+    this.group.rotation.y = THREE.MathUtils.degToRad(this.rot);
 
-    /* ---------- rod ---------- */
-    const metal = mat('#cfd3da', { rough: 0.38, metal: 0.7 });
-    const len = cfg.width + 0.12;
-    // `cyl` stands on y = 0; laid on its side it spans x = [-len/2, len/2] once offset.
-    this.rod = cyl(0.016, 0.016, len, metal, 18);
-    this.rod.rotation.z = Math.PI / 2;
-    this.rod.position.set(len / 2, 0, ROD_Z);
-    this.group.add(this.rod);
-    for (const s of [-1, 1]) {
-      const cap = new THREE.Mesh(new THREE.SphereGeometry(0.026, 14, 10), metal);
-      cap.position.set(s * len / 2, 0, ROD_Z);
-      const arm = box(0.028, 0.028, ROD_Z + 0.012, metal, { r: 0.008 });
-      arm.position.set(s * (cfg.width / 2 - 0.02), -0.014, (ROD_Z + 0.012) / 2);
-      this.group.add(cap, arm);
-    }
-
-    /* ---------- cloth ---------- */
-    // Semi-transparent and double sided: a sheer curtain is seen from both sides.
+    // Semi-transparent and double sided: a sheer curtain is seen from both sides. One material
+    // is kept for the unit's life, so a rebuild (a width change) does not lose its colour.
     this.cloth = new THREE.MeshStandardMaterial({
       color: cfg.color,
       roughness: 0.95,
@@ -85,12 +81,43 @@ export class CurtainUnit {
       side: THREE.DoubleSide,
       depthWrite: false,
     });
-    const geo = panelGeometry(cfg.height);
+
+    this.build();
+  }
+
+  /** (Re)builds the rod, the two panels and the picking box for the current width. */
+  build() {
+    for (const child of this.group.children) {
+      child.traverse((o) => {
+        if (o.geometry) o.geometry.dispose();
+        if (o.material && o.material !== this.cloth) o.material.dispose();
+      });
+    }
+    this.group.clear();
+
+    /* ---------- rod ---------- */
+    const metal = mat('#cfd3da', { rough: 0.38, metal: 0.7 });
+    const len = this.width + 0.12;
+    // `cyl` stands on y = 0; laid on its side it spans x = [-len/2, len/2] once offset.
+    this.rod = cyl(0.016, 0.016, len, metal, 18);
+    this.rod.rotation.z = Math.PI / 2;
+    this.rod.position.set(len / 2, 0, ROD_Z);
+    this.group.add(this.rod);
+    for (const s of [-1, 1]) {
+      const cap = new THREE.Mesh(new THREE.SphereGeometry(0.026, 14, 10), metal);
+      cap.position.set(s * len / 2, 0, ROD_Z);
+      const arm = box(0.028, 0.028, ROD_Z + 0.012, metal, { r: 0.008 });
+      arm.position.set(s * (this.width / 2 - 0.02), -0.014, (ROD_Z + 0.012) / 2);
+      this.group.add(cap, arm);
+    }
+
+    /* ---------- cloth ---------- */
+    const geo = panelGeometry(this.drop);
     // Left panel grows rightwards from the left end of the rod; the right one is turned round,
     // which keeps its winding (and its lighting) correct instead of mirroring it with a scale.
     this.panels = [-1, 1].map((side) => {
       const panel = new THREE.Mesh(geo, this.cloth);
-      panel.position.set(side * cfg.width / 2, 0, ROD_Z + 0.035);
+      panel.position.set(side * this.width / 2, 0, ROD_Z + 0.035);
       panel.rotation.y = side < 0 ? 0 : Math.PI;
       panel.receiveShadow = true;
       panel.castShadow = false;
@@ -101,24 +128,35 @@ export class CurtainUnit {
 
     // Picking box: the whole opening, so a tap anywhere on the cloth selects it.
     this.hit = new THREE.Mesh(
-      new THREE.BoxGeometry(cfg.width + 0.1, cfg.height, 0.34),
+      new THREE.BoxGeometry(this.width + 0.1, this.drop, 0.34),
       new THREE.MeshBasicMaterial({ visible: false }),
     );
-    this.hit.position.set(0, -cfg.height / 2, ROD_Z + 0.02);
-    this.hit.userData = { kind: 'curtain', id: cfg.id };
+    this.hit.position.set(0, -this.drop / 2, ROD_Z + 0.02);
+    this.hit.userData = { kind: 'curtain', id: this.cfg.id };
     this.group.add(this.hit);
   }
 
   /** Places both panels for the current opening: gathered cloth is narrower and thicker. */
   layout() {
-    const span = this.cfg.width / 2 * (GATHER + (1 - this.open) * (1 - GATHER));
+    const span = this.width / 2 * (GATHER + (1 - this.open) * (1 - GATHER));
     this.panels[0].scale.x = span;
     this.panels[1].scale.x = span;
     this.panels[1].position.z = ROD_Z + 0.035 + this.open * 0.022;
   }
 
+  /** Changes the span of the opening, keeping the panels, their draw and the cloth colour. */
+  setWidth(width) {
+    const next = clamp(Number(width) || this.width, CURTAIN_MIN_WIDTH, CURTAIN_MAX_WIDTH);
+    if (Math.abs(next - this.width) < 1e-3) return false;
+    this.width = next;
+    this.cfg.width = next;
+    this.build();
+    return true;
+  }
+
   apply(state = {}, { instant = false } = {}) {
     if (!state) return;
+    if (Number.isFinite(state.width)) this.setWidth(state.width);
     if (Number.isFinite(state.open)) this.openGoal = clamp(state.open, 0, 1);
     if (Number.isFinite(state.opacity)) this.opacityGoal = clamp(state.opacity, 0.06, 1);
     if (typeof state.color === 'string' && state.color !== this.color) {
@@ -152,7 +190,7 @@ export class CurtainUnit {
   }
 
   anchor(out) {
-    return out.set(0, -this.cfg.height * 0.4, ROD_Z + 0.04).applyMatrix4(this.group.matrixWorld);
+    return out.set(0, -this.drop * 0.4, ROD_Z + 0.04).applyMatrix4(this.group.matrixWorld);
   }
 
   /** How open it is, 0-100, for the panel. */

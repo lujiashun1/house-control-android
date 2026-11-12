@@ -390,6 +390,19 @@ export function createStore(config) {
     setCurtain(id, patch) {
       if (writeCurtain(id, patch)) emit({ type: 'curtain', id });
     },
+    /**
+     * Changes the span of a curtain's rod. Width belongs to the plan, not to the device state,
+     * so nothing is sent to a platform: the model is re-hung and the edit stays local until the
+     * plan is saved.
+     */
+    setCurtainWidth(id, width) {
+      const cfg = curtainCfg.get(id);
+      const next = Math.min(8, Math.max(0.4, Math.round(Number(width) * 10) / 10));
+      if (!cfg || !Number.isFinite(next) || Math.abs(next - cfg.width) < 1e-3) return false;
+      cfg.width = next;
+      emit({ type: 'curtain-width', id });
+      return true;
+    },
     setRack(id, patch) {
       if (writeRack(id, patch)) emit({ type: 'rack', id });
     },

@@ -109,5 +109,57 @@ assert.equal(real.state.curtains['living.curtain'].open, 0.9, 'a local move stil
 assert.equal(real.state.curtains['living.curtain'].opacity, 0.3, 'sheer stays ours, never sent');
 console.log('cover ok: link kept, position both ways, sheer local only');
 
+/* ----- 9. plans written before `rot` still resolve to the same angle ----- */
+assert.equal(cfg.rot, 90, 'west, in an old plan, means +90°');
+assert.ok(Math.abs(unit.group.rotation.y - Math.PI / 2) < 1e-9, 'and the model is turned that way');
+console.log('compat ok: wall west → rot', cfg.rot);
+
+/* ----- 10. a curtain no longer has to touch a wall ----- */
+const free = normalize({
+  ...raw,
+  curtains: [{ id: 'living.loose', name: 'Loose', room: 'living', pos: [3.1, 2.2], rot: 42, width: 3.4, height: 2.4, top: 2.4 }],
+});
+const loose = free.curtains[0];
+assert.deepEqual(loose.pos, [3.1, 2.2], 'the plan keeps the exact spot');
+assert.equal(loose.rot, 42, 'and the angle it was given');
+const looseUnit = new CurtainUnit(loose);
+assert.equal(looseUnit.group.position.x, 3.1);
+assert.equal(looseUnit.group.position.z, 2.2);
+assert.ok(Math.abs(looseUnit.group.rotation.y - (42 * Math.PI) / 180) < 1e-9);
+assert.throws(() => normalize({ ...raw, curtains: [{ ...raw.curtains[0], rot: 'sideways' }] }), /rot/);
+console.log('free  ok: placed at', loose.pos, 'turned', loose.rot + '°');
+
+/* ----- 11. the width can be changed while the home runs ----- */
+assert.throws(() => normalize({ ...raw, curtains: [{ ...raw.curtains[0], width: 9 }] }), /between 0.4 and 8/);
+looseUnit.hit.geometry.computeBoundingBox();
+assert.ok(Math.abs(looseUnit.hit.geometry.boundingBox.max.x - (3.4 + 0.1) / 2) < 1e-6, 'pick box spans 3.4 m');
+assert.equal(looseUnit.setWidth(5.2), true);
+assert.equal(looseUnit.width, 5.2);
+looseUnit.hit.geometry.computeBoundingBox();
+assert.ok(Math.abs(looseUnit.hit.geometry.boundingBox.max.x - (5.2 + 0.1) / 2) < 1e-6, 'and 5.2 m after the change');
+assert.ok(Math.abs(looseUnit.panels[0].position.x + 2.6) < 1e-6, 'the panels move out with the rod');
+assert.equal(looseUnit.setWidth(5.2), false, 'no rebuild when the width is unchanged');
+looseUnit.setWidth(99);
+assert.equal(looseUnit.width, 8, 'clamped at 8 m');
+looseUnit.apply({ width: 2.4, open: 0.8, color: '#b8d8ff', opacity: 0.3 }, { instant: true });
+assert.equal(looseUnit.width, 2.4);
+assert.ok(Math.abs(looseUnit.panels[1].scale.x - 2.4 / 2 * (0.12 + 0.2 * 0.88)) < 1e-6);
+assert.equal('#' + looseUnit.cloth.color.getHexString(), '#b8d8ff', 'colour survives a rebuild');
+console.log('width ok: 3.4 → 5.2 → 8 (clamped) → 2.4 m on the state stream');
+
+/* ----- 12. the panel can widen a set while the home runs ----- */
+const widthBus = [];
+real.on((c) => { if (c.type === 'curtain-width') widthBus.push(c.id); });
+assert.equal(real.setCurtainWidth('living.curtain', 3.6), true, 'a new span is accepted');
+assert.equal(real.curtainCfg.get('living.curtain').width, 3.6, 'and lands on the plan entry');
+assert.deepEqual(widthBus, ['living.curtain'], 'the model is told to rebuild');
+assert.equal(real.setCurtainWidth('living.curtain', 3.6), false, 'the same span is a no-op');
+assert.equal(real.setCurtainWidth('living.curtain', 99), true);
+assert.equal(real.curtainCfg.get('living.curtain').width, 8, 'clamped at 8 m');
+assert.equal(real.setCurtainWidth('living.curtain', 0.1), true);
+assert.equal(real.curtainCfg.get('living.curtain').width, 0.4, 'clamped at 0.4 m');
+assert.equal(real.state.curtains['living.curtain'].open, 0.9, 'width never disturbs the drawn position');
+console.log('panel ok: 2.0 → 3.6 → 8 (clamped) → 0.4 m, position untouched');
+
 console.log('\nall curtain checks passed');
 process.exit(0);
