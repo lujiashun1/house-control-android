@@ -47,7 +47,8 @@ export async function bootIsland(root) {
   const canvas = h('canvas', { tabindex: -1 });
   const title = h('div.isle-title', h('span.isle-badge', icon('home', 14)), h('b', config.name));
   const status = h('div.isle-status');
-  const power = h('button.isle-power', { 'aria-label': 'Everything on / off', onclick: toggleEverything }, icon('power', 15, 2.4));
+  // The island's corner switch is a light switch, like the panel's: it leaves fans and ACs alone.
+  const power = h('button.isle-power', { 'aria-label': 'All lights on / off', onclick: toggleEverything }, icon('power', 15, 2.4));
   const scenes = h('div.isle-scenes');
   const list = h('div.isle-list');
   const body = h('div.isle-body',
@@ -150,13 +151,7 @@ export async function bootIsland(root) {
   }
 
   function toggleEverything() {
-    const anyOn = Object.values(state.lights).some((l) => l.on) || Object.values(state.acs).some((a) => a.on);
-    if (anyOn) {
-      store.setAllLights(false);
-      for (const id of Object.keys(state.acs)) store.setAC(id, { on: false });
-    } else {
-      store.setAllLights(true);
-    }
+    store.setAllLights(!Object.values(state.lights).some((l) => l.on));
   }
 
   /* ---------- the model ---------- */
@@ -224,7 +219,7 @@ export async function bootIsland(root) {
     status.replaceChildren(
       h('i.dot', { style: onCount || acOn ? {} : { background: 'rgba(255,255,255,.25)', boxShadow: 'none' } }),
       h('b', onCount ? `${onCount} of ${lights.length}` : 'No'), ' lights on', acOn ? ` · ${acOn.target}°` : '');
-    power.classList.toggle('on', onCount > 0 || Boolean(acOn));
+    power.classList.toggle('on', onCount > 0);
     for (const [id, b] of sceneButtons) b.classList.toggle('active', state.scene === id);
     for (const row of rows) row();
   }

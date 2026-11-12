@@ -89,7 +89,8 @@ export function createPanel(root, config, store, { onFocus, onMenu }) {
   const canvas = h('canvas', { tabindex: -1 });
   const tooltip = h('div.tooltip');
   const homeSub = h('div.home-sub');
-  const power = h('button.round.power', { title: 'Everything on / off', 'aria-label': 'Toggle everything', onclick: toggleEverything }, icon('power', 21, 2.2));
+  // The header switch is a light switch: it never reaches the ACs or the fans.
+  const power = h('button.round.power', { title: 'All lights on / off', 'aria-label': 'Toggle all lights', onclick: toggleEverything }, icon('power', 21, 2.2));
   const gear = h('button.round', { title: 'Settings and floor plans', 'aria-label': 'Settings and floor plans', onclick: () => onMenu(gear) }, icon('settings', 17));
   // Shown while an AI assistant has a link to this home (AI Access on the Mac).
   const aiBadge = h('button.ai-badge', { hidden: true, title: 'An AI assistant has access — click to manage', 'aria-label': 'AI access',
@@ -190,18 +191,14 @@ export function createPanel(root, config, store, { onFocus, onMenu }) {
     for (const l of config.lights) if (l.room === ui.room) store.setLight(l.id, { on });
   }
 
+  /**
+   * The switch in the top-right corner turns the lights on or off, and nothing else. Fans and
+   * air conditioners keep whatever they were doing: they are switched from their own tiles,
+   * their own sheets, or a scene.
+   */
   function toggleEverything() {
     haptic('heavy');
-    const anyOn = Object.values(state.lights).some((l) => l.on) || Object.values(state.acs).some((a) => a.on)
-      || Object.values(state.fans || {}).some((f) => f.on);
-    if (anyOn) {
-      store.setAllLights(false);
-      for (const id of Object.keys(state.acs)) store.setAC(id, { on: false });
-      store.setAllFans(false);
-    } else {
-      store.setAllLights(true);
-      store.setAllFans(true);
-    }
+    store.setAllLights(!Object.values(state.lights).some((l) => l.on));
   }
 
   /* ---------- tiles ---------- */
@@ -1022,7 +1019,8 @@ export function createPanel(root, config, store, { onFocus, onMenu }) {
       h('b', onCount ? `${onCount} of ${lights.length}` : 'No'), ' lights on',
       acsOn.length ? ` · AC ${acsOn[0].target}°` : '',
       Object.values(state.fans || {}).some((f) => f.on) ? ' · Fan on' : '');
-    power.classList.toggle('on', anyOn);
+    // The switch lights up when lights are on, not when a fan or an AC happens to be running.
+    power.classList.toggle('on', onCount > 0);
 
     for (const [id, b] of sceneButtons) b.classList.toggle('active', state.scene === id);
 

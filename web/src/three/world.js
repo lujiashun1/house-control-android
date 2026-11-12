@@ -158,7 +158,7 @@ export function createWorld(canvas, config, store, { onHover, onPick, onLevel = 
       ...[...lights.values()].filter((u) => u.group.visible).map((u) => u.hit),
       ...[...acs.values()].filter((u) => u.group.visible).map((u) => u.hit),
       ...[...fans.values()].filter((u) => u.group.visible).map((u) => u.hit),
-      ...[...curtains.values()].filter((u) => u.group.visible).map((u) => u.hit),
+      ...[...curtains.values()].filter((u) => u.group.visible).flatMap((u) => u.hits),
       ...[...vacuums.values()].filter((u) => u.group.visible).map((u) => u.hit),
       ...[...racks.values()].filter((u) => u.group.visible).map((u) => u.hit),
       ...floors.get(level.id).house.floors,

@@ -131,12 +131,15 @@ console.log('free  ok: placed at', loose.pos, 'turned', loose.rot + '°');
 
 /* ----- 11. the width can be changed while the home runs ----- */
 assert.throws(() => normalize({ ...raw, curtains: [{ ...raw.curtains[0], width: 9 }] }), /between 0.4 and 8/);
-looseUnit.hit.geometry.computeBoundingBox();
-assert.ok(Math.abs(looseUnit.hit.geometry.boundingBox.max.x - (3.4 + 0.1) / 2) < 1e-6, 'pick box spans 3.4 m');
+assert.equal(looseUnit.hits.length, 2, 'one picking box per panel');
+const spanOfWidth = (w, open) => w / 2 * (0.12 + (1 - open) * 0.88);
+const span34 = spanOfWidth(3.4, looseUnit.open);
+assert.ok(Math.abs(looseUnit.hits[0].scale.x - span34) < 1e-6, 'the box is as wide as the gathered cloth');
+assert.ok(Math.abs(looseUnit.hits[0].position.x + (3.4 - span34) / 2) < 1e-6, 'and sits over that cloth');
 assert.equal(looseUnit.setWidth(5.2), true);
 assert.equal(looseUnit.width, 5.2);
-looseUnit.hit.geometry.computeBoundingBox();
-assert.ok(Math.abs(looseUnit.hit.geometry.boundingBox.max.x - (5.2 + 0.1) / 2) < 1e-6, 'and 5.2 m after the change');
+const span52 = spanOfWidth(5.2, looseUnit.open);
+assert.ok(Math.abs(looseUnit.hits[1].position.x - (5.2 - span52) / 2) < 1e-6, 'and follows the new span');
 assert.ok(Math.abs(looseUnit.panels[0].position.x + 2.6) < 1e-6, 'the panels move out with the rod');
 assert.equal(looseUnit.setWidth(5.2), false, 'no rebuild when the width is unchanged');
 looseUnit.setWidth(99);
@@ -160,6 +163,23 @@ assert.equal(real.setCurtainWidth('living.curtain', 0.1), true);
 assert.equal(real.curtainCfg.get('living.curtain').width, 0.4, 'clamped at 0.4 m');
 assert.equal(real.state.curtains['living.curtain'].open, 0.9, 'width never disturbs the drawn position');
 console.log('panel ok: 2.0 → 3.6 → 8 (clamped) → 0.4 m, position untouched');
+
+/* ----- 13. drawn open, the middle of the opening is click-through ------- */
+const pick = new CurtainUnit({ ...loose, width: 3.4, open: 0, color: '#e8e2d6', opacity: 0.62 });
+assert.equal(pick.hits.length, 2);
+const covers = (x) => pick.hits.some((hit) => {
+  const half = Math.abs(hit.scale.x) / 2;
+  return x >= hit.position.x - half - 1e-9 && x <= hit.position.x + half + 1e-9;
+});
+pick.apply({ open: 0 }, { instant: true });
+assert.ok(covers(-1.6) && covers(0) && covers(1.6), 'closed, the boxes cover the whole rod');
+pick.apply({ open: 1 }, { instant: true });
+assert.ok(covers(-1.6) && covers(1.6), 'fully open, the cloth ends are still pickable');
+assert.ok(!covers(0), 'and the empty middle lets a tap through to what stands behind');
+assert.ok(!covers(0.4) && !covers(-0.4), 'the gap is the full drawn-open width, not a hairline');
+const gap = 3.4 - 2 * Math.abs(pick.hits[0].scale.x);
+assert.ok(Math.abs(gap - (3.4 - 2 * (3.4 / 2 * 0.12))) < 1e-6, 'gap = width − two gathered panels');
+console.log('pick  ok: closed covers 3.4 m, open leaves a', gap.toFixed(2), 'm gap in the middle');
 
 console.log('\nall curtain checks passed');
 process.exit(0);

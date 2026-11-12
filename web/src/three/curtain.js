@@ -124,16 +124,23 @@ export class CurtainUnit {
       this.group.add(panel);
       return panel;
     });
-    this.layout();
 
-    // Picking box: the whole opening, so a tap anywhere on the cloth selects it.
-    this.hit = new THREE.Mesh(
-      new THREE.BoxGeometry(this.width + 0.1, this.drop, 0.34),
-      new THREE.MeshBasicMaterial({ visible: false }),
-    );
-    this.hit.position.set(0, -this.drop / 2, ROD_Z + 0.02);
-    this.hit.userData = { kind: 'curtain', id: this.cfg.id };
-    this.group.add(this.hit);
+    // One picking box per panel, not one across the whole opening: when the curtain is drawn
+    // the cloth gathers at the ends, and a tap in the empty middle has to reach whatever stands
+    // behind it. Each box is a unit width here and stretched in `layout()` with the cloth.
+    this.hits = [-1, 1].map((side) => {
+      const hit = new THREE.Mesh(
+        new THREE.BoxGeometry(1, this.drop, 0.34),
+        new THREE.MeshBasicMaterial({ visible: false }),
+      );
+      hit.position.set(0, -this.drop / 2, ROD_Z + 0.02);
+      hit.userData = { kind: 'curtain', id: this.cfg.id, side };
+      this.group.add(hit);
+      return hit;
+    });
+
+    // Last, so the boxes are already there when the cloth is placed for the current opening.
+    this.layout();
   }
 
   /** Places both panels for the current opening: gathered cloth is narrower and thicker. */
@@ -142,6 +149,15 @@ export class CurtainUnit {
     this.panels[0].scale.x = span;
     this.panels[1].scale.x = span;
     this.panels[1].position.z = ROD_Z + 0.035 + this.open * 0.022;
+    // The picking boxes follow the cloth, so the drawn-open middle is left clickable for the
+    // furniture and devices behind it.
+    if (this.hits) {
+      for (const [i, hit] of this.hits.entries()) {
+        const side = i === 0 ? -1 : 1;
+        hit.scale.x = span;
+        hit.position.x = side * (this.width - span) / 2;
+      }
+    }
   }
 
   /** Changes the span of the opening, keeping the panels, their draw and the cloth colour. */
