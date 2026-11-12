@@ -3,6 +3,9 @@
 
 const LIGHT_TYPES = ['ceiling', 'pendant', 'spots', 'floor', 'table', 'strip'];
 const WALLS = ['north', 'south', 'east', 'west'];
+// The two air treatment units share one plan list; `type` says which one it is.
+export const CLIMATE_TYPES = ['dehumidifier', 'humidifier'];
+export const CLIMATE_MODES = ['auto', 'continuous', 'sleep'];
 
 export class ConfigError extends Error {}
 
@@ -213,6 +216,28 @@ export function normalize(raw) {
     };
   });
 
+  // A dehumidifier or a humidifier stands on the floor like a fan: a place, a heading, a
+  // humidity it works towards and the mode it runs in. `type` is what decides which of the
+  // two it is; both share one list, because they behave the same way.
+  const climates = (raw.climates || []).map((c) => {
+    unique(c.id, 'An air treatment unit');
+    need(roomIds.has(c.room), `Air treatment "${c.id}" refers to unknown room "${c.room}"`);
+    need(isPoint(c.pos), `Air treatment "${c.id}" needs "pos": [x, z]`);
+    need(CLIMATE_TYPES.includes(c.type), `Air treatment "${c.id}" needs a "type": one of ${CLIMATE_TYPES.join(', ')}`);
+    const target = c.target ?? 50;
+    need(target >= 30 && target <= 80, `Air treatment "${c.id}" needs a "target" between 30 and 80 %`);
+    return {
+      ...c,
+      name: c.name || c.id,
+      rot: c.rot || 0,
+      target,
+      mode: c.mode || 'auto',
+      humidity: c.humidity ?? 58,
+      tank: c.tank ?? 0.65,
+      level: roomLevel.get(c.room),
+    };
+  });
+
   const scenes = (raw.scenes || []).map((s) => {
     need(typeof s.id === 'string' && s.id, 'A scene is missing an "id"');
     return { id: s.id, name: s.name || s.id, icon: s.icon || 'sun', lights: s.lights || {}, acs: s.acs || {} };
@@ -254,6 +279,7 @@ export function normalize(raw) {
     curtains,
     racks,
     vacuums,
+    climates,
     scenes,
     bounds: all,
   };

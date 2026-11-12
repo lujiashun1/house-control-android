@@ -141,6 +141,15 @@ html.mode-editor, html.mode-editor body { user-select: none; }
 .p-rack.sel .frame { stroke: #fff; stroke-width: 0.06; }
 
 /* A robot vacuum: the dock against the wall, the disc with its turret, a side brush. */
+/* A dehumidifier / humidifier: the body, its vent, and the air it gives off. */
+.p-climate { cursor: move; }
+.p-climate .body { fill: rgba(127, 227, 200, 0.18); stroke: #7fe3c8; stroke-width: 0.03; }
+.p-climate.humidifier .body { fill: rgba(143, 230, 216, 0.2); stroke: #8fe6d8; }
+.p-climate .vent { fill: none; stroke: rgba(10, 14, 26, 0.55); stroke-width: 0.025; }
+.p-climate .mist { fill: none; stroke: rgba(127, 227, 200, 0.55); stroke-width: 0.02; pointer-events: none; }
+.p-climate:hover .body { fill: rgba(127, 227, 200, 0.3); }
+.p-climate.sel .body { stroke: #fff; stroke-width: 0.06; }
+
 .p-vacuum { cursor: move; }
 .p-vacuum .dock { fill: rgba(229, 232, 236, 0.35); stroke: #e5e8ec; stroke-width: 0.025; }
 .p-vacuum .disc { fill: rgba(99, 183, 255, 0.22); stroke: #63b7ff; stroke-width: 0.035; }

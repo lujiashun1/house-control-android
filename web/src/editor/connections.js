@@ -313,6 +313,7 @@ export function createConnections({ rerender, toast, usedBy, onOpen }) {
     const id = `${d.id || ''}`;
     if (kind === 'fan') return id.startsWith('fan.') || (id.startsWith('switch.') && /fan|风扇|風扇|ventil/i.test(`${d.name || ''} ${d.detail || ''}`));
     if (kind === 'cover') return id.startsWith('cover.');
+    if (kind === 'humidifier') return id.startsWith('humidifier.');
     return false;
   };
 
@@ -337,7 +338,7 @@ export function createConnections({ rerender, toast, usedBy, onOpen }) {
     return select;
   }
 
-  const KIND_NAMES = { light: 'light', ac: 'air conditioner', fan: 'fan', cover: 'cover', sensor: 'sensor' };
+  const KIND_NAMES = { light: 'light', ac: 'air conditioner', fan: 'fan', cover: 'cover', sensor: 'sensor', humidifier: 'humidifier' };
   /** "4 lights · 2 ACs · 1 fan", to show what a platform did return when one kind is empty. */
   const counts = (list) => {
     const n = {};

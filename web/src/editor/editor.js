@@ -19,8 +19,9 @@ const sv = (tag, attrs = {}, ...kids) => {
   return el;
 };
 
-const KEYS = { room: 'rooms', light: 'lights', ac: 'acs', fan: 'fans', curtain: 'curtains', rack: 'racks', vacuum: 'vacuums', furniture: 'furniture', opening: 'openings', scene: 'scenes' };
-const TITLES = { room: 'Rooms', light: 'Lights', ac: 'Air conditioners', fan: 'Fans', curtain: 'Curtains', rack: 'Drying racks', vacuum: 'Robot vacuums', furniture: 'Furniture', opening: 'Doors & windows', scene: 'Scenes' };
+const KEYS = { room: 'rooms', light: 'lights', ac: 'acs', fan: 'fans', curtain: 'curtains', rack: 'racks', vacuum: 'vacuums', climate: 'climates', furniture: 'furniture', opening: 'openings', scene: 'scenes' };
+const TITLES = { room: 'Rooms', light: 'Lights', ac: 'Air conditioners', fan: 'Fans', curtain: 'Curtains', rack: 'Drying racks', vacuum: 'Robot vacuums', climate: 'Dehumidifiers & humidifiers', furniture: 'Furniture', opening: 'Doors & windows', scene: 'Scenes' };
+const CLIMATE_TYPE_NAMES = { dehumidifier: 'Dehumidifier', humidifier: 'Humidifier' };
 const FLOOR_FILL = { oak: '#4a3d2e', walnut: '#3c2f28', tile: '#39424b', stone: '#30353c' };
 const WALLS = ['north', 'east', 'south', 'west'];
 const LEVEL_NAMES = ['Ground floor', 'First floor', 'Second floor', 'Third floor', 'Fourth floor', 'Fifth floor'];
@@ -169,7 +170,7 @@ export async function bootEditor(root) {
   const levelRooms = (id = level) => doc.rooms.filter((r) => (r.level ?? firstLevel()) === id);
   // The floor an item is on; null for a scene, which is for the whole home.
   function levelOf(kind, item) {
-    if (kind === 'light' || kind === 'ac' || kind === 'fan' || kind === 'curtain' || kind === 'vacuum' || kind === 'rack') return roomLevel(item.room);
+    if (kind === 'light' || kind === 'ac' || kind === 'fan' || kind === 'curtain' || kind === 'vacuum' || kind === 'rack' || kind === 'climate') return roomLevel(item.room);
     if (kind === 'room' || kind === 'furniture' || kind === 'opening') return item.level ?? firstLevel();
     return null;
   }
@@ -438,7 +439,7 @@ export async function bootEditor(root) {
       const linked = [...doc.lights, ...doc.acs].filter(isLinked).length;
       status.className = 'status';
       const floors = levelList().length > 1 ? `${levelList().length} floors · ` : '';
-      status.replaceChildren(h('span.ok', '●'), ` ${floors}${doc.rooms.length} rooms · ${doc.lights.length} lights · ${doc.acs.length} ACs · ${doc.fans.length} fans · ${doc.curtains.length} curtains · ${doc.vacuums.length} robots · ${doc.racks.length} racks · `,
+      status.replaceChildren(h('span.ok', '●'), ` ${floors}${doc.rooms.length} rooms · ${doc.lights.length} lights · ${doc.acs.length} ACs · ${doc.fans.length} fans · ${doc.curtains.length} curtains · ${doc.vacuums.length} robots · ${doc.racks.length} racks · ${(doc.climates || []).length} air units · `,
         `${linked} linked to real devices`, dirty ? h('span.dirty', ' · unsaved changes') : '');
     } catch (e) {
       valid = null;
@@ -450,7 +451,7 @@ export async function bootEditor(root) {
   }
 
   function previewStore(cfg) {
-    const state = { lights: {}, acs: {}, fans: {}, curtains: {}, racks: {}, vacuums: {} };
+    const state = { lights: {}, acs: {}, fans: {}, curtains: {}, racks: {}, climates: {}, vacuums: {} };
     for (const l of cfg.lights) state.lights[l.id] = { on: previewLights, brightness: 0.85, temp: 3200, color: l.color || null };
     for (const a of cfg.acs) state.acs[a.id] = { on: previewLights, mode: 'cool', fan: 'auto', swing: 'swing', sleep: false, target: 23 };
     // The fans run in the preview while the lights are on, so their airflow can be judged.
@@ -458,6 +459,9 @@ export async function bootEditor(root) {
     for (const c of cfg.curtains || []) state.curtains[c.id] = { open: previewLights ? 0.55 : 0.15, color: c.color, opacity: c.opacity };
     for (const v of cfg.vacuums || []) state.vacuums[v.id] = { status: previewLights ? 'cleaning' : 'docked', battery: v.battery ?? 70, speed: v.speed || 'standard' };
     for (const r of cfg.racks || []) state.racks[r.id] = { open: previewLights ? 1 : 0.15 };
+    // The air treatment units run in the preview while the lights are on, so the mist and
+    // the rotor can be judged without opening the app.
+    for (const c of cfg.climates || []) state.climates[c.id] = { on: previewLights, target: c.target ?? 50, mode: c.mode || 'auto', humidity: c.humidity ?? 58 };
     return { state, on: () => () => {} };
   }
 
@@ -504,6 +508,7 @@ export async function bootEditor(root) {
     if (kind === 'curtain') return [item.name || item.id, `${roomName(item.room)} · ${fix(item.width ?? 2)} m · ${Math.round(item.rot ?? 0)}°`];
     if (kind === 'vacuum') return [item.name || item.id, `${roomName(item.room)} · dock at ${fix(item.pos[0])}, ${fix(item.pos[1])}`];
     if (kind === 'rack') return [item.name || item.id, `${roomName(item.room)} · ${fix(item.width ?? 1.6)} m · ${Math.round((item.open ?? 0.15) * 100)}% down`];
+    if (kind === 'climate') return [item.name || item.id, `${roomName(item.room)} · ${CLIMATE_TYPE_NAMES[item.type] || 'Dehumidifier'} · ${item.target ?? 50}%`];
     if (kind === 'furniture') return [item.type, roomName(roomAt(item.pos)?.id) || '—'];
     if (kind === 'opening' && !item.to) return [item.type || 'door', ''];
     if (kind === 'opening') return [item.type || 'door', `${fix(Math.hypot(item.to[0] - item.from[0], item.to[1] - item.from[1]))} m`];
@@ -600,6 +605,13 @@ export async function bootEditor(root) {
         pos: [fix(rx + rw / 2), fix(rz + rd / 2)], rot: 0,
         width: fix(Math.min(1.8, Math.max(1.2, rw * 0.5))), lift: 1.3, top: 2.62, open: 0.15,
       });
+    } else if (kind === 'climate') {
+      if (!room) return toast('Add a room first', true);
+      // A floor unit in the middle of the room; its type can be switched in the inspector.
+      list.push({
+        id: uniqueId(`${room.id}.climate`), name: `${room.name} dehumidifier`, room: room.id, type: 'dehumidifier',
+        pos: freeSpot(room, center), rot: 0, target: 50, mode: 'auto', humidity: 58, tank: 0.65,
+      });
     } else if (kind === 'furniture') {
       list.push(stamp(type === 'stairs' ? { type, pos: center, rot: 0, width: 1, depth: 2.8 } : { type: type || 'sofa', pos: center, rot: 0 }));
     } else if (kind === 'opening') {
@@ -635,7 +647,7 @@ export async function bootEditor(root) {
       copy.id = uniqueId(item.id);
       copy.name = `${item.name || item.id} 2`;
       copy.rect[0] = fix(item.rect[0] + item.rect[2]);
-    } else if (kind === 'light' || kind === 'ac' || kind === 'fan' || kind === 'curtain' || kind === 'vacuum' || kind === 'rack') {
+    } else if (kind === 'light' || kind === 'ac' || kind === 'fan' || kind === 'curtain' || kind === 'vacuum' || kind === 'rack' || kind === 'climate') {
       copy.id = uniqueId(item.id);
       for (const key of ['tuya', 'link', 'sensor']) delete copy[key];
       if (kind === 'fan') copy.pos = [fix(item.pos[0] + 0.6), fix(item.pos[1] + 0.6)];
@@ -670,7 +682,7 @@ export async function bootEditor(root) {
   // Turns furniture, a lamp or a curtain a quarter (or, with `step`, a little).
   function rotate(step = 90) {
     const item = sel.index != null ? doc[KEYS[sel.kind]]?.[sel.index] : null;
-    if (!item || !['furniture', 'light', 'fan', 'curtain'].includes(sel.kind)) return;
+    if (!item || !['furniture', 'light', 'fan', 'curtain', 'climate'].includes(sel.kind)) return;
     snapshot(`rotate${sel.kind}${sel.index}`);
     item.rot = (((item.rot || 0) + step) % 360 + 540) % 360 - 180;
     touch();
@@ -753,6 +765,7 @@ export async function bootEditor(root) {
     doc.curtains = doc.curtains.filter((c) => !ids.has(c.room));
     doc.vacuums = doc.vacuums.filter((v) => !ids.has(v.room));
     doc.racks = doc.racks.filter((r) => !ids.has(r.room));
+    doc.climates = (doc.climates || []).filter((c) => !ids.has(c.room));
     forgetDevices();
   }
 
@@ -903,6 +916,20 @@ export async function bootEditor(root) {
         sv('circle', { cx: -w + 0.2, cy: 0, r: 0.05, class: 'motor' }),
         sv('circle', { cx: w - 0.2, cy: 0, r: 0.05, class: 'motor' }),
         sv('path', { d: `M${-w + 0.05} 0H${w - 0.05}`, class: 'cable' })));
+    });
+
+    // A dehumidifier or a humidifier, seen from above: a body, the vent it breathes through,
+    // and the air it gives off (dry air in, mist out).
+    doc.climates?.forEach((c, i) => {
+      if (!here('climate', c)) return;
+      const round = c.type === 'humidifier';
+      kids.push(sv('g', {
+        class: `p-climate ${c.type || 'dehumidifier'}${isSel('climate', i) ? ' sel' : ''}`, 'data-kind': 'climate', 'data-index': i,
+        transform: `translate(${c.pos[0]} ${c.pos[1]}) rotate(${-(c.rot || 0)})`,
+      }, big ? sv('rect', { x: -0.3, y: -0.3, width: 0.6, height: 0.6, class: 'hit' }) : null,
+        round ? sv('circle', { r: 0.115, class: 'body' }) : sv('rect', { x: -0.17, y: -0.135, width: 0.34, height: 0.27, rx: 0.035, class: 'body' }),
+        round ? sv('circle', { r: 0.045, class: 'vent' }) : sv('circle', { r: 0.075, class: 'vent' }),
+        sv('path', { d: round ? 'M-0.1 0.16Q0 0.26 0.1 0.16' : 'M-0.09 0.15Q0 0.21 0.09 0.15', class: 'mist' })));
     });
 
     // A robot vacuum, seen from above: the dock against the wall and the disc on it.
@@ -1207,7 +1234,7 @@ export async function bootEditor(root) {
     } else {
       const item = doc[KEYS[drag.kind]][drag.index];
       item.pos = [fix(drag.pos[0] + dx), fix(drag.pos[1] + dz)];
-      if (drag.kind === 'light' || drag.kind === 'fan') {
+      if (drag.kind === 'light' || drag.kind === 'fan' || drag.kind === 'climate') {
         const room = roomAt(item.pos);
         if (room) item.room = room.id;
       }
@@ -1488,6 +1515,23 @@ export async function bootEditor(root) {
         h('button.btn', { onclick: duplicate }, icon('duplicate', 14, 2.2), 'Duplicate')),
       // A robot vacuum is a Home Assistant `vacuum`: start, pause, go home, and the speed it scrubs at.
       links.deviceSection(item, 'vacuum', linkHooks));
+    } else if (kind === 'climate') {
+      head(item.name || item.id, `${CLIMATE_TYPE_NAMES[item.type] || 'Dehumidifier'} · id: ${item.id}`);
+      nodes.push(section('Air treatment',
+        bind('Name', text(), prop(item, 'name', '')),
+        row(bind('Type', choice([['dehumidifier', 'Dehumidifier'], ['humidifier', 'Humidifier']]), { ...prop(item, 'type'), event: 'change' }),
+          bind('Room', choice(doc.rooms.map((r) => [r.id, r.name || r.id])), { ...prop(item, 'room'), event: 'change' }))),
+      section('Position, m',
+        row(bind('X', number(), { ...at(item, 'pos', 0), parse: parseNum }), bind('Z', number(), { ...at(item, 'pos', 1), parse: parseNum })),
+        row(bind('Rotation, °', number(15), { ...prop(item, 'rot', 0), parse: parseNum }),
+          bind('Works towards, %', number(5), { ...prop(item, 'target', 50), parse: parseNum })),
+        h('div.fields',
+          h('button.btn', { onclick: () => rotate(90) }, icon('rotateCw', 14, 2.2), 'Turn 90°'),
+          h('button.btn', { onclick: duplicate }, icon('duplicate', 14, 2.2), 'Duplicate')),
+        h('p.note', 'On, target humidity and mode are set on the unit itself, in the control panel. A dehumidifier fills its tank as it works; a humidifier empties its own.')),
+      // A Home Assistant `humidifier` entity is the same domain for both, so a link would
+      // carry `on`, the humidity target and the mode; the native side maps it (see README).
+      links.deviceSection(item, 'humidifier', linkHooks));
     } else if (kind === 'furniture') {
       const stairs = item.type === 'stairs';
       head(stairs ? 'Stairs' : item.type, stairs ? 'Up to the floor above' : 'Decoration only');
@@ -2046,7 +2090,7 @@ export async function bootEditor(root) {
       },
       headActions() {
         const nodes = [];
-        if (sel.kind === 'furniture' || sel.kind === 'fan' || (sel.kind === 'light' && doc.lights[sel.index]?.type === 'strip')) {
+        if (sel.kind === 'furniture' || sel.kind === 'fan' || sel.kind === 'climate' || (sel.kind === 'light' && doc.lights[sel.index]?.type === 'strip')) {
           nodes.push(h('button.p-icon', { 'aria-label': 'Turn 90°', onclick: () => { haptic('light'); rotate(90); } }, icon('rotateCw', 18, 2)));
         }
         if (sel.index != null) {

@@ -87,7 +87,7 @@ async function boot() {
         if (!target) return;
         if (target.kind === 'light') { haptic('light'); store.toggleLight(target.id); }
         else if (target.kind === 'ac') panel.openSheet(target);
-        else if (['fan', 'curtain', 'vacuum', 'rack'].includes(target.kind)) { haptic('light'); panel.openSheet(target); }
+        else if (['fan', 'curtain', 'vacuum', 'rack', 'dehumidifier', 'humidifier'].includes(target.kind)) { haptic('light'); panel.openSheet(target); }
         else if (target.kind === 'room') panel.selectRoom(target.id);
       },
     });

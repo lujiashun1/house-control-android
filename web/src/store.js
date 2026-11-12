@@ -40,6 +40,14 @@ function defaultRack(cfg) {
   return { open: cfg.open ?? 0.15 };
 }
 
+// A dehumidifier or a humidifier works towards a humidity: on, the target percentage and the
+// mode it was left in. How full its tank is belongs to the model, not to the plan.
+function defaultClimate(cfg) {
+  return { on: false, target: cfg.target ?? 50, mode: cfg.mode || 'auto', humidity: cfg.humidity ?? 58 };
+}
+
+export const CLIMATE_MODES = ['auto', 'continuous', 'sleep'];
+
 export const VACUUM_SPEEDS = ['quiet', 'standard', 'strong', 'max'];
 export const VACUUM_SPEED_NAMES = { quiet: 'Quiet', standard: 'Standard', strong: 'Strong', max: 'Max' };
 
@@ -60,13 +68,15 @@ export function createStore(config) {
   const curtainCfg = new Map((config.curtains || []).map((c) => [c.id, c]));
   const vacuumCfg = new Map((config.vacuums || []).map((v) => [v.id, v]));
   const rackCfg = new Map((config.racks || []).map((r) => [r.id, r]));
+  const climateCfg = new Map((config.climates || []).map((c) => [c.id, c]));
 
-  const state = { lights: {}, acs: {}, fans: {}, curtains: {}, racks: {}, vacuums: {}, scene: null };
+  const state = { lights: {}, acs: {}, fans: {}, curtains: {}, racks: {}, climates: {}, vacuums: {}, scene: null };
   for (const l of config.lights) state.lights[l.id] = defaultLight(l);
   for (const f of config.fans || []) state.fans[f.id] = defaultFan(f);
   for (const c of config.curtains || []) state.curtains[c.id] = defaultCurtain(c);
   for (const v of config.vacuums || []) state.vacuums[v.id] = defaultVacuum(v);
   for (const r of config.racks || []) state.racks[r.id] = defaultRack(r);
+  for (const c of config.climates || []) state.climates[c.id] = defaultClimate(c);
   for (const a of config.acs) state.acs[a.id] = defaultAC(a, config.outdoorTemp);
   // What each real AC can do, as reported by the native side. A simulated AC can do everything.
   const features = {};
@@ -84,6 +94,7 @@ export function createStore(config) {
       for (const [id, s] of Object.entries(saved.curtains || {})) if (state.curtains[id]) Object.assign(state.curtains[id], s);
       for (const [id, s] of Object.entries(saved.vacuums || {})) if (state.vacuums[id]) Object.assign(state.vacuums[id], s);
       for (const [id, s] of Object.entries(saved.racks || {})) if (state.racks[id]) Object.assign(state.racks[id], s);
+      for (const [id, s] of Object.entries(saved.climates || {})) if (state.climates[id]) Object.assign(state.climates[id], s);
       for (const [id, f] of Object.entries(saved.features || {})) if (state.acs[id]) features[id] = f;
       for (const [id, f] of Object.entries(saved.fanFeatures || {})) if (state.fans[id]) fanFeatures[id] = f;
       state.scene = saved.scene || null;
@@ -108,17 +119,18 @@ export function createStore(config) {
       post('summary', summary());
       // The native shell passes this on to its other views of the same home (the panel
       // and the island each run their own store), which adopt it without re-sending.
-      if (!change.adopted) post('state', { lights: state.lights, acs: state.acs, fans: state.fans, curtains: state.curtains, racks: state.racks, vacuums: state.vacuums, scene: state.scene, source: change.source ?? store.source ?? null });
+      if (!change.adopted) post('state', { lights: state.lights, acs: state.acs, fans: state.fans, curtains: state.curtains, racks: state.racks, climates: state.climates, vacuums: state.vacuums, scene: state.scene, source: change.source ?? store.source ?? null });
     }
   }
 
   // One command per device is in flight at a time. Whatever changes meanwhile is merged
   // into a single follow-up, so dragging a slider costs a couple of requests (or infrared
   // key presses) instead of dozens. A change the device refuses is rolled back.
-  const COOL_DOWN = { light: 300, ac: 900, fan: 500, cover: 700, rack: 700, vacuum: 800 };
+  const COOL_DOWN = { light: 300, ac: 900, fan: 500, cover: 700, rack: 700, vacuum: 800, climate: 700 };
   const outbox = new Map();
 
-  const stateOf = (kind, id) => kind === 'light' ? state.lights[id]
+  const stateOf = (kind, id) => kind === 'climate' ? state.climates[id]
+    : kind === 'light' ? state.lights[id]
     : kind === 'fan' ? state.fans[id]
     : kind === 'cover' ? state.curtains[id]
     : kind === 'vacuum' ? state.vacuums[id]
@@ -282,6 +294,32 @@ export function createStore(config) {
     return true;
   }
 
+  // A dehumidifier or a humidifier: on, a humidity target between 30 and 80 %, and one of
+  // three modes. The wording is the panel's own, not Home Assistant's (its `humidifier`
+  // domain has no such fixed modes); a linked unit sends `on` and `target` only.
+  function sanitizeClimate(patch) {
+    const out = {};
+    if ('on' in patch) out.on = Boolean(patch.on);
+    if ('target' in patch) out.target = clamp(Math.round(Number(patch.target)), 30, 80);
+    if ('mode' in patch && CLIMATE_MODES.includes(patch.mode)) out.mode = patch.mode;
+    return out;
+  }
+
+  function writeClimate(id, patch, { remote = false } = {}) {
+    const cur = state.climates[id];
+    const cfg = climateCfg.get(id);
+    if (!cur) return false;
+    const clean = sanitizeClimate(patch);
+    const diff = Object.fromEntries(Object.entries(clean).filter(([k, v]) => cur[k] !== v));
+    if (!Object.keys(diff).length) return false;
+    const before = Object.fromEntries(Object.keys(diff).map((k) => [k, cur[k]]));
+    Object.assign(cur, diff);
+    // A unit wired to a platform goes out through the native side; a simulated one only
+    // changes here, and the model follows the state stream.
+    if (!remote && cfg.link?.service) dispatch('climate', id, diff, before);
+    return true;
+  }
+
   function writeVacuum(id, patch, { remote = false } = {}) {
     const cur = state.vacuums[id];
     const cfg = vacuumCfg.get(id);
@@ -345,6 +383,7 @@ export function createStore(config) {
     lightCfg,
     acCfg,
     fanCfg,
+    climateCfg,
     curtainCfg,
     rackCfg,
     vacuumCfg,
@@ -408,6 +447,13 @@ export function createStore(config) {
     },
     setVacuum(id, patch) {
       if (writeVacuum(id, patch)) emit({ type: 'vacuum', id });
+    },
+    setClimate(id, patch) {
+      if (writeClimate(id, patch)) emit({ type: 'climate', id });
+    },
+    toggleClimate(id) {
+      const c = state.climates[id];
+      if (c) store.setClimate(id, { on: !c.on });
     },
     cleanVacuum(id) { store.setVacuum(id, { status: 'cleaning' }); },
     locateVacuum(id) {

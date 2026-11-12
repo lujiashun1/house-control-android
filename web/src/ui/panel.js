@@ -23,6 +23,10 @@ const RACK_GRADIENT = 'linear-gradient(90deg, #2a3038 0%, #8794a4 50%, #eef2f7 1
 const CURTAIN_GRADIENT = 'linear-gradient(90deg, #2a3038 0%, #6b6f7a 48%, #efe7d8 100%)';
 const SHEER_GRADIENT = 'linear-gradient(90deg, rgba(255,255,255,.12) 0%, rgba(255,255,255,.5) 50%, #ffffff 100%)';
 const WIDTH_GRADIENT = 'linear-gradient(90deg, #39404f 0%, #8b93a3 50%, #dfe3ea 100%)';
+const CLIMATE_DRY = '#7fe3c8';   // a dehumidifier's cool, dry green
+const CLIMATE_MIST = '#8fe6d8';  // a humidifier's warm, wet teal
+const HUMIDITY_GRADIENT = 'linear-gradient(90deg, #2b5f5a 0%, #7fe3c8 55%, #d6fff4 100%)';
+const CLIMATE_MODE_LABEL = { auto: 'Auto', continuous: 'Continuous', sleep: 'Sleep' };
 
 const TEMP_GRADIENT = 'linear-gradient(90deg, #2f7df6 0%, #58b4f5 34%, #f3e2c0 62%, #f6a54a 82%, #f0762c 100%)';
 const DIM_GRADIENT = 'linear-gradient(90deg, #4a4f5e 0%, #b9a98c 45%, #ffe2b0 100%)';
@@ -69,6 +73,13 @@ function vacuumStatus(s) {
 function rackStatus(s) {
   const pct = Math.round(s.open * 100);
   return pct <= 2 ? 'Up' : pct >= 98 ? 'Lowered' : `${pct}% down`;
+}
+
+// "50% · Auto · drying": what a dehumidifier or humidifier is working towards.
+function climateStatus(s, type) {
+  if (!s.on) return 'Off';
+  const verb = type === 'humidifier' ? 'humidifying' : 'drying';
+  return `${Math.round(s.target)}% · ${CLIMATE_MODE_LABEL[s.mode] || 'Auto'} · ${verb}`;
 }
 
 function acTemperatureColor(target, cfg) {
@@ -425,11 +436,38 @@ export function createPanel(root, config, store, { onFocus, onMenu }) {
     };
   }
 
+  // A dehumidifier or a humidifier is a one-tap device: the name, what it is working
+  // towards, and a power button. The bar under the name is its humidity target.
+  function climateTile(cfg) {
+    const sub = h('div.tile-sub');
+    const el = h('div.tile.rack', { role: 'button', tabindex: 0, 'aria-label': cfg.name, onclick: () => openSheet({ kind: 'climate', id: cfg.id }) },
+      h('div.bubble', icon(cfg.type === 'humidifier' ? 'waves' : 'droplet', 19)),
+      h('div.tile-text', h('div.tile-name', cfg.name), sub),
+      h('div.tile-level'),
+      h('button.mini-power', {
+        'aria-label': `${cfg.name} power`,
+        onclick: (e) => { e.stopPropagation(); haptic('medium'); store.toggleClimate(cfg.id); },
+      }, icon('power', 16, 2.2)));
+    el.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') openSheet({ kind: 'climate', id: cfg.id }); });
+    return {
+      el, cfg, kind: 'climate',
+      update() {
+        const c = state.climates[cfg.id];
+        el.classList.toggle('on', c.on);
+        el.style.setProperty('--c', cfg.type === 'humidifier' ? CLIMATE_MIST : CLIMATE_DRY);
+        el.style.setProperty('--level', String(Math.max(0.03, (c.target - 30) / 50)));
+        sub.textContent = ui.room === 'all' && !isPhone
+          ? `${climateStatus(c, cfg.type)} · ${roomName.get(cfg.room)}` : climateStatus(c, cfg.type);
+      },
+    };
+  }
+
   for (const cfg of config.acs) tiles.set(cfg.id, acTile(cfg));
   for (const cfg of config.curtains || []) tiles.set(cfg.id, curtainTile(cfg));
   for (const cfg of config.vacuums || []) tiles.set(cfg.id, vacuumTile(cfg));
   for (const cfg of config.racks || []) tiles.set(cfg.id, rackTile(cfg));
   for (const cfg of config.fans || []) tiles.set(cfg.id, fanTile(cfg));
+  for (const cfg of config.climates || []) tiles.set(cfg.id, climateTile(cfg));
   for (const cfg of config.lights) tiles.set(cfg.id, lightTile(cfg));
 
   function toggleLight(id) {
@@ -455,6 +493,7 @@ export function createPanel(root, config, store, { onFocus, onMenu }) {
         devices.filter((t) => t.kind === 'fan').forEach(add);
         devices.filter((t) => t.kind === 'vacuum').forEach(add);
         devices.filter((t) => t.kind === 'rack').forEach(add);
+        devices.filter((t) => t.kind === 'climate').forEach(add);
         devices.filter((t) => t.kind === 'curtain').forEach(add);
         devices.filter((t) => t.kind === 'light').forEach(add);
       }
@@ -473,12 +512,15 @@ export function createPanel(root, config, store, { onFocus, onMenu }) {
   let sheetView = null;
 
   function openSheet(target) {
+    // A tap on the unit itself reports its own kind; the sheet is shared by both types.
+    if (target.kind === 'dehumidifier' || target.kind === 'humidifier') target = { kind: 'climate', id: target.id };
     ui.sheet = target;
     sheetView = target.kind === 'ac' ? acSheet(target.id)
       : target.kind === 'fan' ? fanSheet(target.id)
         : target.kind === 'vacuum' ? vacuumSheet(target.id)
           : target.kind === 'rack' ? rackSheet(target.id)
-          : target.kind === 'curtain' ? curtainSheet(target.id) : lightSheet(target.id);
+          : target.kind === 'curtain' ? curtainSheet(target.id)
+            : target.kind === 'climate' ? climateSheet(target.id) : lightSheet(target.id);
     sheet.replaceChildren(...sheetView.nodes);
     panel.classList.add('hidden');
     sheet.classList.remove('hidden');
@@ -487,7 +529,7 @@ export function createPanel(root, config, store, { onFocus, onMenu }) {
     card.classList.add('detail');
     hideTooltip();
     onFocus(['ac', 'fan', 'curtain', 'vacuum', 'rack'].includes(target.kind)
-      ? target : { kind: 'room', id: store.lightCfg.get(target.id).room });
+      ? target : { kind: 'room', id: (store.lightCfg.get(target.id) || store.climateCfg.get(target.id) || {}).room });
     update();
   }
 
@@ -789,6 +831,58 @@ export function createPanel(root, config, store, { onFocus, onMenu }) {
         const link = cfg.link?.service
           ? ` · ${cfg.link.service === 'homeassistant' ? 'Home Assistant' : cfg.link.service} ${cfg.link.id}` : ' · simulated';
         noteText.textContent = `${roomName.get(cfg.room)} · ${(cfg.width ?? 1.6).toFixed(2)} m wide, drops ${(cfg.lift ?? 1.3).toFixed(2)} m${link}`;
+      },
+    };
+  }
+
+  // The sheet of a dehumidifier or a humidifier: power, the humidity it is working towards,
+  // and the mode it runs in. The type is the plan's, so one sheet serves both.
+  function climateSheet(id) {
+    const cfg = store.climateCfg.get(id);
+    const s = () => state.climates[id];
+    const set = (patch) => store.setClimate(id, patch);
+    const sub = h('div.sheet-sub');
+    const powerBtn = h('button.round.power', { 'aria-label': 'Power', onclick: () => { haptic('medium'); set({ on: !s().on }); } }, icon('power', 21, 2.2));
+    const big = bigNumber('%');
+    const slider = createSlider({
+      min: 30, max: 80, step: 1, value: s().target, gradient: HUMIDITY_GRADIENT,
+      labels: ['30', '80'],
+      onInput: (v) => set({ on: true, target: v }),
+    });
+    const chips = ['auto', 'continuous', 'sleep'].map((mode) => h('button.toggle-chip', {
+      onclick: () => { haptic('light'); set({ mode, on: true }); },
+    }, CLIMATE_MODE_LABEL[mode]));
+    const modes = h('div.options', ...chips);
+    const live = h('span.live');
+    const noteText = h('span');
+    const isHumid = cfg.type === 'humidifier';
+
+    return {
+      nodes: [
+        sheetHead(cfg.name, sub, powerBtn),
+        h('div.readout', big.el),
+        h('div.slider-row',
+          h('button.round', { 'aria-label': 'Lower humidity', onclick: () => { haptic('tick'); set({ on: true, target: Math.max(30, s().target - 5) }); } }, icon('minus', 18, 2.2)),
+          slider.el,
+          h('button.round', { 'aria-label': 'Raise humidity', onclick: () => { haptic('tick'); set({ on: true, target: Math.min(80, s().target + 5) }); } }, icon('plus', 18, 2.2))),
+        modes,
+        h('div.sheet-note', icon(isHumid ? 'waves' : 'droplet', 20), noteText),
+      ],
+      update() {
+        const c = s();
+        powerBtn.classList.toggle('on', c.on);
+        sub.replaceChildren(live, h('b', c.on ? 'On' : 'Off'), ` · Room ${Math.round(c.humidity)}%`);
+        live.style.background = c.on ? (isHumid ? CLIMATE_MIST : CLIMATE_DRY) : 'rgba(255,255,255,.25)';
+        live.style.boxShadow = c.on ? `0 0 8px ${isHumid ? CLIMATE_MIST : CLIMATE_DRY}` : 'none';
+        big.set(Math.round(c.target), !c.on);
+        slider.set(c.target);
+        for (const [i, mode] of ['auto', 'continuous', 'sleep'].entries()) {
+          chips[i].classList.toggle('active', c.mode === mode);
+          chips[i].classList.toggle('on', c.mode === mode);
+        }
+        const link = cfg.link?.service
+          ? ` · ${cfg.link.service === 'homeassistant' ? 'Home Assistant' : cfg.link.service} ${cfg.link.id}` : '';
+        noteText.textContent = `${isHumid ? 'Humidifier' : 'Dehumidifier'} · ${roomName.get(cfg.room)} · target ${Math.round(c.target)}%${link}`;
       },
     };
   }

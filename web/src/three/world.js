@@ -12,6 +12,7 @@ import { FanUnit } from './fan.js';
 import { CurtainUnit } from './curtain.js';
 import { VacuumUnit } from './vacuum.js';
 import { RackUnit } from './rack.js';
+import { ClimateUnit } from './climate.js';
 
 export const STAGE_BG = '#0a0e1a';
 
@@ -148,12 +149,20 @@ export function createWorld(canvas, config, store, { onHover, onPick, onLevel = 
     vacuums.set(cfg.id, unit);
     floors.get(cfg.level).group.add(unit.group);
   }
+  // Dehumidifiers and humidifiers stand on the floor and keep working while they are on:
+  // a rotor turning, water climbing the tank, or a plume of mist going up.
+  const climates = new Map();
+  for (const cfg of (config.climates || [])) {
+    const unit = new ClimateUnit(cfg);
+    climates.set(cfg.id, unit);
+    floors.get(cfg.level).group.add(unit.group);
+  }
   let hitTargets = [];
 
   // The floors above the one on show are lifted off; the ones under it stay, unlit, as its base.
   function showLevel() {
     for (const [id, { group }] of floors) group.visible = levelById.get(id).elevation <= level.elevation;
-    for (const unit of [...lights.values(), ...acs.values(), ...fans.values(), ...curtains.values(), ...racks.values(), ...vacuums.values()]) unit.group.visible = unit.cfg.level === level.id;
+    for (const unit of [...lights.values(), ...acs.values(), ...fans.values(), ...curtains.values(), ...racks.values(), ...vacuums.values(), ...climates.values()]) unit.group.visible = unit.cfg.level === level.id;
     hitTargets = [
       ...[...lights.values()].filter((u) => u.group.visible).map((u) => u.hit),
       ...[...acs.values()].filter((u) => u.group.visible).map((u) => u.hit),
@@ -161,6 +170,7 @@ export function createWorld(canvas, config, store, { onHover, onPick, onLevel = 
       ...[...curtains.values()].filter((u) => u.group.visible).flatMap((u) => u.hits),
       ...[...vacuums.values()].filter((u) => u.group.visible).map((u) => u.hit),
       ...[...racks.values()].filter((u) => u.group.visible).map((u) => u.hit),
+      ...[...climates.values()].filter((u) => u.group.visible).map((u) => u.hit),
       ...floors.get(level.id).house.floors,
     ];
     assignShadows();
@@ -354,6 +364,7 @@ export function createWorld(canvas, config, store, { onHover, onPick, onLevel = 
     for (const [id, unit] of curtains) unit.apply(store.state.curtains?.[id], opts);
     for (const [id, unit] of vacuums) unit.apply(store.state.vacuums?.[id], opts);
     for (const [id, unit] of racks) unit.apply(store.state.racks?.[id], opts);
+    for (const [id, unit] of climates) unit.apply(store.state.climates?.[id], opts);
     wake();
   }
 
@@ -366,6 +377,7 @@ export function createWorld(canvas, config, store, { onHover, onPick, onLevel = 
     else if (change.type === 'curtain-width') curtains.get(change.id)?.setWidth(store.curtainCfg.get(change.id)?.width);
     else if (change.type === 'vacuum') vacuums.get(change.id).apply(store.state.vacuums?.[change.id]);
     else if (change.type === 'rack') racks.get(change.id).apply(store.state.racks?.[change.id]);
+    else if (change.type === 'climate') climates.get(change.id)?.apply(store.state.climates?.[change.id]);
     else syncAll();
     wake();
   });
@@ -589,6 +601,7 @@ export function createWorld(canvas, config, store, { onHover, onPick, onLevel = 
     for (const unit of curtains.values()) active = unit.update(dt) || active;
     for (const unit of vacuums.values()) active = unit.update(dt) || active;
     for (const unit of racks.values()) active = unit.update(dt) || active;
+    for (const unit of climates.values()) active = unit.update(dt) || active;
     if (shadowFrames > 0 || (!active && (wallsMoved || Math.abs(rig.az - shadowAz) > 1))) {
       if (shadowFrames > 0 || wallsMoved) for (const shadow of lampShadows) shadow.needsUpdate = true;
       renderer.shadowMap.needsUpdate = true;
@@ -630,6 +643,7 @@ export function createWorld(canvas, config, store, { onHover, onPick, onLevel = 
     curtains,
     racks,
     vacuums,
+    climates,
 
     setInsets(top, bottom) { topInset = top; bottomInset = bottom; resize(); },
     resize,
@@ -721,6 +735,7 @@ export function createWorld(canvas, config, store, { onHover, onPick, onLevel = 
         for (const unit of curtains.values()) unit.update(0.05);
         for (const unit of vacuums.values()) unit.update(0.05);
         for (const unit of racks.values()) unit.update(0.05);
+        for (const unit of climates.values()) unit.update(0.05);
       }
       for (const shadow of lampShadows) shadow.needsUpdate = true;
       renderer.shadowMap.needsUpdate = true;
@@ -738,6 +753,7 @@ export function createWorld(canvas, config, store, { onHover, onPick, onLevel = 
     if (t.kind === 'curtain') return curtains.get(t.id)?.cfg.level;
     if (t.kind === 'vacuum') return vacuums.get(t.id)?.cfg.level;
     if (t.kind === 'rack') return racks.get(t.id)?.cfg.level;
+    if (t.kind === 'dehumidifier' || t.kind === 'humidifier') return climates.get(t.id)?.cfg.level;
     return (t.kind === 'ac' ? acs : lights).get(t.id)?.cfg.level;
   }
 
