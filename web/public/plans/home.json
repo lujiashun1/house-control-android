@@ -83,6 +83,10 @@
     { "id": "bedroom.ac", "name": "Bedroom AC", "room": "bedroom", "wall": "north", "pos": [3.3, 0],  "y": 2.2 }
   ],
 
+  "fans": [
+    { "id": "living.fan", "name": "Living fan", "room": "living", "pos": [1.55, 7.5], "rot": 180, "height": 0.95, "sweep": 45 }
+  ],
+
   "scenes": [
     { "id": "bright", "name": "Bright", "icon": "sun",
       "lights": { "*": { "on": true, "brightness": 1, "temp": 4200 } } },

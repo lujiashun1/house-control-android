@@ -132,6 +132,22 @@ export function normalize(raw) {
     return { ...a, name: a.name || a.id, y: a.y ?? 2.2, min: a.min ?? 16, max: a.max ?? 30, level: roomLevel.get(a.room) };
   });
 
+  // A pedestal fan stands on the floor of a room: it has a place, a heading and a speed
+    // range, but no wall and no thermostat.
+  const fans = (raw.fans || []).map((f) => {
+    unique(f.id, 'A fan');
+    need(roomIds.has(f.room), `Fan "${f.id}" refers to unknown room "${f.room}"`);
+    need(isPoint(f.pos), `Fan "${f.id}" needs "pos": [x, z]`);
+    return {
+      ...f,
+      name: f.name || f.id,
+      rot: f.rot || 0,
+      height: f.height ?? 0.95,
+      sweep: f.sweep ?? 45,
+      level: roomLevel.get(f.room),
+    };
+  });
+
   const scenes = (raw.scenes || []).map((s) => {
     need(typeof s.id === 'string' && s.id, 'A scene is missing an "id"');
     return { id: s.id, name: s.name || s.id, icon: s.icon || 'sun', lights: s.lights || {}, acs: s.acs || {} };
@@ -169,6 +185,7 @@ export function normalize(raw) {
     furniture,
     lights,
     acs,
+    fans,
     scenes,
     bounds: all,
   };

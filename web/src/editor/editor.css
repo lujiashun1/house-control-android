@@ -122,6 +122,16 @@ html.mode-editor, html.mode-editor body { user-select: none; }
 .p-light.sel circle:not(.halo), .p-light.sel rect { stroke: #fff; stroke-width: 0.08; }
 .p-light.sel .halo { fill: rgba(255, 255, 255, 0.2); }
 
+/* A pedestal fan: green, like the air it blows. */
+.p-fan { cursor: move; }
+.p-fan .guard { fill: rgba(78, 231, 155, 0.12); stroke: #4ee79b; stroke-width: 0.03; }
+.p-fan .hub { fill: #4ee79b; stroke: #0a0e1a; stroke-width: 0.025; }
+.p-fan .blade { fill: rgba(78, 231, 155, 0.45); stroke: #4ee79b; stroke-width: 0.015; pointer-events: none; }
+.p-fan .front { stroke: rgba(78, 231, 155, 0.55); stroke-width: 0.045; stroke-linecap: round; fill: none; pointer-events: none; }
+.p-fan:hover .guard { fill: rgba(78, 231, 155, 0.2); }
+.p-fan.sel .guard { stroke: #fff; stroke-width: 0.06; }
+.p-fan.sel .hub { stroke: #fff; }
+
 .p-handle { fill: #6aa6ff; stroke: #fff; vector-effect: non-scaling-stroke; stroke-width: 1.5px; }
 .p-handle.nw, .p-handle.se, .grab.nw, .grab.se { cursor: nwse-resize; }
 .p-handle.ne, .p-handle.sw, .grab.ne, .grab.sw { cursor: nesw-resize; }

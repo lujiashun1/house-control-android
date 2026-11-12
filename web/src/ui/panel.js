@@ -11,6 +11,9 @@ import { haptic, isPhone } from '../bridge.js';
 const MODE_LABEL = { cool: 'Cool', heat: 'Heat', dry: 'Dry', fan: 'Fan', auto: 'Auto' };
 const FAN_LABEL = { auto: 'Auto', low: 'Low', medium: 'Medium', high: 'High', turbo: 'Turbo' };
 const SWING_LABEL = { swing: 'Swing', l1: 'L1', l2: 'L2', l3: 'L3', l4: 'L4', l5: 'L5', off: 'Off' };
+const FAN_GREEN = '#4ee79b';
+const FAN_SPEED_LABEL = ['Off', 'Quiet', 'Low', 'Medium', 'High', 'Turbo'];
+const FAN_GRADIENT = 'linear-gradient(90deg, #1f7a52 0%, #4ee79b 60%, #a7ffd3 100%)';
 const SWATCHES = ['#ff5a4f', '#ff9a3c', '#ffd84a', '#5fe08a', '#42d6e8', '#4f8dff', '#8b5cff', '#ff5fc4'];
 
 const TEMP_GRADIENT = 'linear-gradient(90deg, #2f7df6 0%, #58b4f5 34%, #f3e2c0 62%, #f6a54a 82%, #f0762c 100%)';
@@ -24,6 +27,16 @@ const css = (c) => `#${c.getHexString()}`;
 function lightStatus(cfg, s) {
   if (!s.on) return 'Off';
   return cfg.capabilities.includes('brightness') ? `${Math.round(s.brightness * 100)}%` : 'On';
+}
+
+// 0 when off, otherwise the speed step the blades are at (1-5).
+function fanLevel(s) {
+  return s.on ? Math.max(1, Math.min(5, s.speed)) : 0;
+}
+
+function fanStatus(s) {
+  if (!s.on) return 'Off';
+  return `${FAN_SPEED_LABEL[Math.max(1, Math.min(5, s.speed))]}${s.oscillate ? ' · sweeping' : ''}`;
 }
 
 function acTemperatureColor(target, cfg) {
@@ -147,12 +160,15 @@ export function createPanel(root, config, store, { onFocus, onMenu }) {
 
   function toggleEverything() {
     haptic('heavy');
-    const anyOn = Object.values(state.lights).some((l) => l.on) || Object.values(state.acs).some((a) => a.on);
+    const anyOn = Object.values(state.lights).some((l) => l.on) || Object.values(state.acs).some((a) => a.on)
+      || Object.values(state.fans || {}).some((f) => f.on);
     if (anyOn) {
       store.setAllLights(false);
       for (const id of Object.keys(state.acs)) store.setAC(id, { on: false });
+      store.setAllFans(false);
     } else {
       store.setAllLights(true);
+      store.setAllFans(true);
     }
   }
 
@@ -269,7 +285,45 @@ export function createPanel(root, config, store, { onFocus, onMenu }) {
     };
   }
 
+  function fanTile(cfg) {
+    const sub = h('div.tile-sub');
+    const value = h('div.value');
+    const bubble = h('div.bubble', icon('fan', 19));
+    const step = (d) => (e) => {
+      e.stopPropagation();
+      haptic('tick');
+      const f = state.fans[cfg.id];
+      const next = clamp(Math.max(1, f.speed) + d, 1, 5);
+      store.setFan(cfg.id, { on: true, speed: next });
+    };
+    const el = h('div.tile.ac.fan', { role: 'button', tabindex: 0, 'aria-label': cfg.name, onclick: () => openSheet({ kind: 'fan', id: cfg.id }) },
+      bubble,
+      h('div.tile-text', h('div.tile-name', cfg.name), sub),
+      h('div.stepper',
+        h('button', { 'aria-label': 'Slower', onclick: step(-1) }, icon('minus', 15, 2.2)),
+        value,
+        h('button', { 'aria-label': 'Faster', onclick: step(1) }, icon('plus', 15, 2.2))),
+      h('button.mini-power', {
+        'aria-label': `${cfg.name} power`, onclick: (e) => { e.stopPropagation(); haptic('medium'); store.toggleFan(cfg.id); },
+      }, icon('power', 16, 2.2)));
+    el.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') openSheet({ kind: 'fan', id: cfg.id }); });
+    return {
+      el, cfg, kind: 'fan',
+      update() {
+        const f = state.fans[cfg.id];
+        const level = fanLevel(f);
+        el.classList.toggle('on', f.on);
+        el.classList.toggle('sweeping', f.on && f.oscillate);
+        el.style.setProperty('--c', FAN_GREEN);
+        value.textContent = String(level);
+        sub.textContent = ui.room === 'all' && !isPhone
+          ? `${fanStatus(f)} · ${roomName.get(cfg.room)}` : fanStatus(f);
+      },
+    };
+  }
+
   for (const cfg of config.acs) tiles.set(cfg.id, acTile(cfg));
+  for (const cfg of config.fans || []) tiles.set(cfg.id, fanTile(cfg));
   for (const cfg of config.lights) tiles.set(cfg.id, lightTile(cfg));
 
   function toggleLight(id) {
@@ -292,6 +346,7 @@ export function createPanel(root, config, store, { onFocus, onMenu }) {
         if (!devices.length) continue;
         if (ui.room === 'all') nodes.push(h('div.group-label', room.name));
         devices.filter((t) => t.kind === 'ac').forEach(add);
+        devices.filter((t) => t.kind === 'fan').forEach(add);
         devices.filter((t) => t.kind === 'light').forEach(add);
       }
       if (multiLevel && ui.room === 'all' && nodes.length > before) nodes.splice(before, 0, h('div.level-label', level.name));
@@ -310,7 +365,8 @@ export function createPanel(root, config, store, { onFocus, onMenu }) {
 
   function openSheet(target) {
     ui.sheet = target;
-    sheetView = target.kind === 'ac' ? acSheet(target.id) : lightSheet(target.id);
+    sheetView = target.kind === 'ac' ? acSheet(target.id)
+      : target.kind === 'fan' ? fanSheet(target.id) : lightSheet(target.id);
     sheet.replaceChildren(...sheetView.nodes);
     panel.classList.add('hidden');
     sheet.classList.remove('hidden');
@@ -318,7 +374,7 @@ export function createPanel(root, config, store, { onFocus, onMenu }) {
     sheet.inert = false;
     card.classList.add('detail');
     hideTooltip();
-    onFocus(target.kind === 'ac' ? target : { kind: 'room', id: store.lightCfg.get(target.id).room });
+    onFocus(target.kind === 'ac' || target.kind === 'fan' ? target : { kind: 'room', id: store.lightCfg.get(target.id).room });
     update();
   }
 
@@ -443,6 +499,48 @@ export function createPanel(root, config, store, { onFocus, onMenu }) {
     };
   }
 
+  function fanSheet(id) {
+    const cfg = store.fanCfg.get(id);
+    const s = () => state.fans[id];
+    const set = (patch) => store.setFan(id, patch);
+    const sub = h('div.sheet-sub');
+    const powerBtn = h('button.round.power', { 'aria-label': 'Power', onclick: () => { haptic('medium'); set({ on: !s().on }); } }, icon('power', 21, 2.2));
+    const big = bigNumber('/ 5');
+    const slider = createSlider({
+      min: 1, max: 5, step: 1, value: Math.max(1, s().speed), gradient: FAN_GRADIENT, labels: ['1', '5'],
+      onInput: (v) => set({ on: true, speed: v }),
+    });
+    const osc = h('button.toggle-chip', {
+      onclick: () => { haptic('light'); set({ oscillate: !s().oscillate }); },
+    }, icon('rotate', 17), 'Oscillate', h('span.switch'));
+    const live = h('span.live');
+
+    return {
+      nodes: [
+        sheetHead(cfg.name, sub, powerBtn),
+        h('div.readout', big.el),
+        h('div.slider-row',
+          h('button.round', { 'aria-label': 'Slower', onclick: () => { haptic('tick'); set({ on: true, speed: Math.max(1, s().speed - 1) }); } }, icon('minus', 18, 2.2)),
+          slider.el,
+          h('button.round', { 'aria-label': 'Faster', onclick: () => { haptic('tick'); set({ on: true, speed: Math.min(5, s().speed + 1) }); } }, icon('plus', 18, 2.2))),
+        h('div.options', osc),
+        h('div.sheet-note', icon('fan', 20),
+          `${roomName.get(cfg.room)} · sweeping ${cfg.sweep}° each way, about 7 seconds from side to side.`),
+      ],
+      update() {
+        const f = s();
+        powerBtn.classList.toggle('on', f.on);
+        sub.replaceChildren(live, h('b', FAN_SPEED_LABEL[fanLevel(f)]));
+        live.style.background = f.on ? FAN_GREEN : 'rgba(255,255,255,.25)';
+        live.style.boxShadow = f.on ? `0 0 8px ${FAN_GREEN}` : 'none';
+        big.set(fanLevel(f), !f.on);
+        slider.set(Math.max(1, fanLevel(f) || 1));
+        osc.classList.toggle('on', f.oscillate);
+        osc.classList.toggle('active', f.oscillate);
+      },
+    };
+  }
+
   function lightSheet(id) {
     const cfg = store.lightCfg.get(id);
     const s = () => state.lights[id];
@@ -517,6 +615,10 @@ export function createPanel(root, config, store, { onFocus, onMenu }) {
       const cfg = store.lightCfg.get(hit.id);
       const s = state.lights[hit.id];
       name = cfg.name; status = lightStatus(cfg, s); on = s.on; color = css(lightColor(s, tmp));
+    } else if (hit.kind === 'fan') {
+      const cfg = store.fanCfg.get(hit.id);
+      const s = state.fans[hit.id];
+      name = cfg.name; status = fanStatus(s); on = s.on; color = FAN_GREEN;
     } else {
       const cfg = store.acCfg.get(hit.id);
       const s = state.acs[hit.id];
@@ -533,6 +635,12 @@ export function createPanel(root, config, store, { onFocus, onMenu }) {
   /* ---------- derived state ---------- */
 
   function mood() {
+    // A fan's sheet is lit in the colour of its own airflow.
+    if (ui.sheet?.kind === 'fan') {
+      const f = state.fans[ui.sheet.id];
+      if (!f.on) return NAVY.clone().multiplyScalar(0.8);
+      return new THREE.Color(FAN_GREEN).multiplyScalar(0.12 + 0.05 * Math.max(1, f.speed));
+    }
     if (ui.sheet?.kind === 'ac') {
       const a = state.acs[ui.sheet.id];
       if (!a.on) return NAVY.clone().multiplyScalar(0.8);
@@ -563,7 +671,8 @@ export function createPanel(root, config, store, { onFocus, onMenu }) {
     homeSub.replaceChildren(
       h('span.live', { style: anyOn ? {} : { background: 'rgba(255,255,255,.25)', boxShadow: 'none' } }),
       h('b', onCount ? `${onCount} of ${lights.length}` : 'No'), ' lights on',
-      acsOn.length ? ` · AC ${acsOn[0].target}°` : '');
+      acsOn.length ? ` · AC ${acsOn[0].target}°` : '',
+      Object.values(state.fans || {}).some((f) => f.on) ? ' · Fan on' : '');
     power.classList.toggle('on', anyOn);
 
     for (const [id, b] of sceneButtons) b.classList.toggle('active', state.scene === id);

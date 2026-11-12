@@ -8,6 +8,7 @@ import { buildHouse } from './house.js';
 import { buildFurniture } from './furniture.js';
 import { LightUnit } from './lights.js';
 import { ACUnit } from './ac.js';
+import { FanUnit } from './fan.js';
 
 export const STAGE_BG = '#0a0e1a';
 
@@ -107,15 +108,25 @@ export function createWorld(canvas, config, store, { onHover, onPick, onLevel = 
     acs.set(cfg.id, unit);
     floors.get(cfg.level).group.add(unit.group);
   }
+
+  // The fans stand on the floor of their room and are the only devices that keep moving
+  // once switched on, so the render loop is kept awake while one is turning.
+  const fans = new Map();
+  for (const cfg of (config.fans || [])) {
+    const unit = new FanUnit(cfg);
+    fans.set(cfg.id, unit);
+    floors.get(cfg.level).group.add(unit.group);
+  }
   let hitTargets = [];
 
   // The floors above the one on show are lifted off; the ones under it stay, unlit, as its base.
   function showLevel() {
     for (const [id, { group }] of floors) group.visible = levelById.get(id).elevation <= level.elevation;
-    for (const unit of [...lights.values(), ...acs.values()]) unit.group.visible = unit.cfg.level === level.id;
+    for (const unit of [...lights.values(), ...acs.values(), ...fans.values()]) unit.group.visible = unit.cfg.level === level.id;
     hitTargets = [
       ...[...lights.values()].filter((u) => u.group.visible).map((u) => u.hit),
       ...[...acs.values()].filter((u) => u.group.visible).map((u) => u.hit),
+      ...[...fans.values()].filter((u) => u.group.visible).map((u) => u.hit),
       ...floors.get(level.id).house.floors,
     ];
     assignShadows();
@@ -305,6 +316,7 @@ export function createWorld(canvas, config, store, { onHover, onPick, onLevel = 
       unit.apply(store.state.lights[id], { ...opts, delay: opts.stagger ? 0.25 + i++ * 0.06 : 0 });
     }
     for (const [id, unit] of acs) unit.apply(store.state.acs[id], opts);
+    for (const [id, unit] of fans) unit.apply(store.state.fans?.[id], opts);
     wake();
   }
 
@@ -312,6 +324,7 @@ export function createWorld(canvas, config, store, { onHover, onPick, onLevel = 
     if (change.type === 'tick') return;
     if (change.type === 'light') lights.get(change.id).apply(store.state.lights[change.id]);
     else if (change.type === 'ac') acs.get(change.id).apply(store.state.acs[change.id]);
+    else if (change.type === 'fan') fans.get(change.id).apply(store.state.fans?.[change.id]);
     else syncAll();
     wake();
   });
@@ -335,7 +348,10 @@ export function createWorld(canvas, config, store, { onHover, onPick, onLevel = 
   }
 
   function unitOf(t) {
-    return t?.kind === 'light' ? lights.get(t.id) : t?.kind === 'ac' ? acs.get(t.id) : null;
+    if (t?.kind === 'light') return lights.get(t.id);
+    if (t?.kind === 'ac') return acs.get(t.id);
+    if (t?.kind === 'fan') return fans.get(t.id);
+    return null;
   }
 
   function screenAnchor(t) {
@@ -525,6 +541,7 @@ export function createWorld(canvas, config, store, { onHover, onPick, onLevel = 
     active = updateWalls(dt) || active;
     for (const unit of lights.values()) active = unit.update(dt) || active;
     for (const unit of acs.values()) active = unit.update(dt) || active;
+    for (const unit of fans.values()) active = unit.update(dt) || active;
     if (shadowFrames > 0 || (!active && (wallsMoved || Math.abs(rig.az - shadowAz) > 1))) {
       if (shadowFrames > 0 || wallsMoved) for (const shadow of lampShadows) shadow.needsUpdate = true;
       renderer.shadowMap.needsUpdate = true;
@@ -562,6 +579,7 @@ export function createWorld(canvas, config, store, { onHover, onPick, onLevel = 
   const world = {
     lights,
     acs,
+    fans,
 
     setInsets(top, bottom) { topInset = top; bottomInset = bottom; resize(); },
     resize,
@@ -649,6 +667,7 @@ export function createWorld(canvas, config, store, { onHover, onPick, onLevel = 
         updateWalls(0.05);
         for (const unit of lights.values()) unit.update(0.05);
         for (const unit of acs.values()) unit.update(0.05);
+        for (const unit of fans.values()) unit.update(0.05);
       }
       for (const shadow of lampShadows) shadow.needsUpdate = true;
       renderer.shadowMap.needsUpdate = true;
@@ -662,6 +681,7 @@ export function createWorld(canvas, config, store, { onHover, onPick, onLevel = 
   // The floor a room, a lamp or an AC is on.
   function levelOf(t) {
     if (t.kind === 'room') return config.rooms.find((r) => r.id === t.id)?.level;
+    if (t.kind === 'fan') return fans.get(t.id)?.cfg.level;
     return (t.kind === 'ac' ? acs : lights).get(t.id)?.cfg.level;
   }
 

@@ -12,6 +12,11 @@ function defaultLight(cfg) {
   return { on: false, brightness: 0.8, temp: 3000, color: cfg.color || null };
 }
 
+// A fan has no platform behind it: on/off, a speed step and the sweep, all in this WebView.
+function defaultFan(cfg) {
+  return { on: false, speed: cfg.speed ?? 2, oscillate: false };
+}
+
 function defaultAC(cfg, outdoor) {
   return {
     on: false, target: 24, mode: 'cool', fan: 'auto', swing: 'swing',
@@ -25,9 +30,11 @@ export function createStore(config) {
   const listeners = new Set();
   const lightCfg = new Map(config.lights.map((l) => [l.id, l]));
   const acCfg = new Map(config.acs.map((a) => [a.id, a]));
+  const fanCfg = new Map((config.fans || []).map((f) => [f.id, f]));
 
-  const state = { lights: {}, acs: {}, scene: null };
+  const state = { lights: {}, acs: {}, fans: {}, scene: null };
   for (const l of config.lights) state.lights[l.id] = defaultLight(l);
+  for (const f of config.fans || []) state.fans[f.id] = defaultFan(f);
   for (const a of config.acs) state.acs[a.id] = defaultAC(a, config.outdoorTemp);
   // What each real AC can do, as reported by the native side. A simulated AC can do everything.
   const features = {};
@@ -38,6 +45,7 @@ export function createStore(config) {
     if (saved && saved.home === config.name) {
       for (const [id, s] of Object.entries(saved.lights || {})) if (state.lights[id]) Object.assign(state.lights[id], s);
       for (const [id, s] of Object.entries(saved.acs || {})) if (state.acs[id]) Object.assign(state.acs[id], s);
+      for (const [id, s] of Object.entries(saved.fans || {})) if (state.fans[id]) Object.assign(state.fans[id], s);
       for (const [id, f] of Object.entries(saved.features || {})) if (state.acs[id]) features[id] = f;
       state.scene = saved.scene || null;
       restored = true;
@@ -61,7 +69,7 @@ export function createStore(config) {
       post('summary', summary());
       // The native shell passes this on to its other views of the same home (the panel
       // and the island each run their own store), which adopt it without re-sending.
-      if (!change.adopted) post('state', { lights: state.lights, acs: state.acs, scene: state.scene, source: change.source ?? store.source ?? null });
+      if (!change.adopted) post('state', { lights: state.lights, acs: state.acs, fans: state.fans, scene: state.scene, source: change.source ?? store.source ?? null });
     }
   }
 
@@ -158,6 +166,28 @@ export function createStore(config) {
     return true;
   }
 
+  // A fan is not a real device: it is the little 3D one standing in the room, so nothing
+  // leaves this WebView. Only the shape of the state is kept clean, like a lamp's.
+  function sanitizeFan(patch) {
+    const out = {};
+    if ('on' in patch) out.on = Boolean(patch.on);
+    if ('speed' in patch) out.speed = clamp(Math.round(Number(patch.speed) || 0), 0, 5);
+    if ('oscillate' in patch) out.oscillate = Boolean(patch.oscillate);
+    return out;
+  }
+
+  function writeFan(id, patch) {
+    const cur = state.fans[id];
+    if (!cur) return false;
+    const clean = sanitizeFan(patch);
+    const diff = Object.fromEntries(Object.entries(clean).filter(([k, v]) => cur[k] !== v));
+    if (!Object.keys(diff).length) return false;
+    // A speed change implies it is on; the off step is what turns it off.
+    if (diff.speed > 0 && diff.on === undefined && !cur.on) diff.on = true;
+    Object.assign(cur, diff);
+    return true;
+  }
+
   function summary() {
     const lights = Object.values(state.lights);
     const acs = Object.entries(state.acs).filter(([, a]) => a.on);
@@ -176,6 +206,7 @@ export function createStore(config) {
     restored,
     lightCfg,
     acCfg,
+    fanCfg,
     summary,
     /** Set by the UI: called with (device id, message) when a real device refuses a change. */
     onDeviceError: null,
@@ -204,6 +235,22 @@ export function createStore(config) {
       if (writeAC(id, patch)) emit({ type: 'ac', id });
     },
 
+    setFan(id, patch) {
+      if (writeFan(id, patch)) emit({ type: 'fan', id });
+    },
+    toggleFan(id) {
+      const fan = state.fans[id];
+      if (fan) store.setFan(id, { on: !fan.on });
+    },
+    setAllFans(on) {
+      let any = false;
+      for (const id of Object.keys(state.fans)) {
+        if (on) any = writeFan(id, { on: true, speed: Math.max(1, state.fans[id].speed) }) || any;
+        else any = writeFan(id, { on: false }) || any;
+      }
+      if (any) emit({ type: 'bulk' });
+    },
+
     applyScene(sceneId) {
       const scene = config.scenes.find((s) => s.id === sceneId);
       if (!scene) return;
@@ -222,7 +269,7 @@ export function createStore(config) {
     },
 
     /** Reports the state again, for a view that has only just started. */
-    share() { post('state', { lights: state.lights, acs: state.acs, scene: state.scene }); },
+    share() { post('state', { lights: state.lights, acs: state.acs, fans: state.fans, scene: state.scene }); },
 
     // The state of another view of this home (see emit). Nothing goes to the devices:
     // the view where the change was made has already sent it.
@@ -230,6 +277,7 @@ export function createStore(config) {
       let any = false;
       for (const [id, s] of Object.entries(other.lights || {})) any = writeLight(id, s, { remote: true }) || any;
       for (const [id, s] of Object.entries(other.acs || {})) any = writeAC(id, s, { remote: true }) || any;
+      for (const [id, s] of Object.entries(other.fans || {})) any = writeFan(id, s) || any;
       const scene = other.scene ?? null;
       if (scene !== state.scene) { state.scene = scene; any = true; }
       if (any) emit({ type: 'bulk', remote: true, adopted: true, source: other.source || null });
