@@ -54,13 +54,16 @@ export function createWorld(canvas, config, store, { onHover, onPick, onLevel = 
   let shadowFrames = 3; // shadow maps are rendered again for this many frames
   let wallsMoved = false; // the lamps' shadow maps are out of date
   const floors = new Map(); // level id -> { group, house }
+  const furnitureByLevel = new Map();
   for (const l of config.levels) {
     const group = new THREE.Group();
     group.position.y = l.elevation;
     const house = buildHouse(config, l);
-    group.add(house.group, buildFurniture(config.furniture.filter((f) => f.level === l.id)));
+    const furniture = buildFurniture(config.furniture.filter((f) => f.level === l.id));
+    group.add(house.group, furniture);
     scene.add(group);
     floors.set(l.id, { group, house });
+    furnitureByLevel.set(l.id, furniture);
   }
 
   const lights = new Map();
@@ -158,11 +161,41 @@ export function createWorld(canvas, config, store, { onHover, onPick, onLevel = 
     floors.get(cfg.level).group.add(unit.group);
   }
   let hitTargets = [];
+  // A room can be looked at on its own: a clip box around its footprint removes every other
+  // room, and the devices that belong to them are switched off as well.
+  let soloRoom = null;
+
+  function clipPlanesFor(room) {
+    const m = -0.005; // cut a hair inside the room so a neighbour's wall sliver cannot show
+    return [
+      new THREE.Plane(new THREE.Vector3(1, 0, 0), -(room.x - m)),
+      new THREE.Plane(new THREE.Vector3(-1, 0, 0), room.x + room.w + m),
+      new THREE.Plane(new THREE.Vector3(0, 0, 1), -(room.z - m)),
+      new THREE.Plane(new THREE.Vector3(0, 0, -1), room.z + room.d + m),
+    ];
+  }
+
+  function applySolo() {
+    renderer.clippingPlanes = soloRoom ? clipPlanesFor(soloRoom) : [];
+    showLevel();
+    wake(6);
+  }
 
   // The floors above the one on show are lifted off; the ones under it stay, unlit, as its base.
   function showLevel() {
     for (const [id, { group }] of floors) group.visible = levelById.get(id).elevation <= level.elevation;
-    for (const unit of [...lights.values(), ...acs.values(), ...fans.values(), ...curtains.values(), ...racks.values(), ...vacuums.values(), ...climates.values()]) unit.group.visible = unit.cfg.level === level.id;
+    for (const unit of [...lights.values(), ...acs.values(), ...fans.values(), ...curtains.values(), ...racks.values(), ...vacuums.values(), ...climates.values()]) {
+      unit.group.visible = unit.cfg.level === level.id && (!soloRoom || unit.cfg.room === soloRoom.id);
+    }
+    for (const [id, furniture] of furnitureByLevel) {
+      if (id !== level.id) continue;
+      for (const piece of furniture.children) {
+        const p = piece.position;
+        piece.visible = !soloRoom
+          || (p.x >= soloRoom.x - 0.01 && p.x <= soloRoom.x + soloRoom.w + 0.01
+            && p.z >= soloRoom.z - 0.01 && p.z <= soloRoom.z + soloRoom.d + 0.01);
+      }
+    }
     hitTargets = [
       ...[...lights.values()].filter((u) => u.group.visible).map((u) => u.hit),
       ...[...acs.values()].filter((u) => u.group.visible).map((u) => u.hit),
@@ -171,7 +204,7 @@ export function createWorld(canvas, config, store, { onHover, onPick, onLevel = 
       ...[...vacuums.values()].filter((u) => u.group.visible).map((u) => u.hit),
       ...[...racks.values()].filter((u) => u.group.visible).map((u) => u.hit),
       ...[...climates.values()].filter((u) => u.group.visible).map((u) => u.hit),
-      ...floors.get(level.id).house.floors,
+      ...floors.get(level.id).house.floors.filter((f) => !soloRoom || f.userData.id === soloRoom.id),
     ];
     assignShadows();
     moon.target.position.set(center.x, level.elevation, center.z);
@@ -655,6 +688,8 @@ export function createWorld(canvas, config, store, { onHover, onPick, onLevel = 
       const next = levelById.get(id);
       if (!next || next === level) return;
       level = next;
+      soloRoom = null;
+      renderer.clippingPlanes = [];
       showLevel();
       if (rig.focus && levelOf(rig.focus) !== level.id) rig.focus = null;
       placeMoon(rig.az);
@@ -667,6 +702,19 @@ export function createWorld(canvas, config, store, { onHover, onPick, onLevel = 
     focus(next) {
       const on = next && levelOf(next);
       if (on && on !== level.id) world.setLevel(on);
+      // A room is shown alone. Tapping one of its devices keeps that isolation; leaving the
+      // room, or focusing a device outside it, goes back to the whole floor.
+      if (next?.kind === 'room') {
+        const room = config.rooms.find((r) => r.id === next.id) || null;
+        if (room !== soloRoom) { soloRoom = room; applySolo(); }
+      } else if (!next) {
+        if (soloRoom) { soloRoom = null; applySolo(); }
+      } else if (soloRoom) {
+        const unitRoom = (acs.get(next.id)?.cfg || lights.get(next.id)?.cfg || fans.get(next.id)?.cfg
+          || curtains.get(next.id)?.cfg || racks.get(next.id)?.cfg || vacuums.get(next.id)?.cfg
+          || climates.get(next.id)?.cfg || {}).room;
+        if (unitRoom && unitRoom !== soloRoom.id) { soloRoom = null; applySolo(); }
+      }
       rig.focus = next;
       rig.zoom = next ? 1 : home.zoom;
       if (next) rig.pan.set(0, 0, 0);
