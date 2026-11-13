@@ -56,20 +56,38 @@ export function createSlider({ min, max, step = 1, value, gradient, compact = fa
     return clamp(Math.round(raw / step) * step, min, max);
   };
 
+  // Horizontal drag changes the value; a mostly vertical drag belongs to the sheet's
+  // scroll, so it must not capture the pointer or nudge the value on the way up.
+  let gesture = null;
   track.addEventListener('pointerdown', (ev) => {
-    track.setPointerCapture(ev.pointerId);
-    el.classList.add('dragging');
-    const next = fromEvent(ev);
-    if (next !== current) input(next);
+    gesture = { x: ev.clientX, y: ev.clientY, dragging: false };
   });
   track.addEventListener('pointermove', (ev) => {
-    if (!el.classList.contains('dragging')) return;
+    if (!gesture) return;
+    const dx = ev.clientX - gesture.x;
+    const dy = ev.clientY - gesture.y;
+    if (!gesture.dragging) {
+      if (Math.abs(dy) > 8 && Math.abs(dy) > Math.abs(dx)) { gesture = null; return; }
+      if (Math.abs(dx) < 5) return;
+      gesture.dragging = true;
+      try { track.setPointerCapture(ev.pointerId); } catch { /* capture is a nicety */ }
+      el.classList.add('dragging');
+    }
     const next = fromEvent(ev);
     if (next !== current) input(next);
   });
-  const end = () => el.classList.remove('dragging');
+  const end = (ev) => {
+    if (!gesture) return;
+    // A tap (no drag) still moves the thumb to the touched point.
+    if (ev.type === 'pointerup' && !gesture.dragging) {
+      const next = fromEvent(ev);
+      if (next !== current) input(next);
+    }
+    gesture = null;
+    el.classList.remove('dragging');
+  };
   track.addEventListener('pointerup', end);
-  track.addEventListener('pointercancel', end);
+  track.addEventListener('pointercancel', () => { gesture = null; el.classList.remove('dragging'); });
 
   paint();
   return {
@@ -181,16 +199,45 @@ export function createColorPad({ value, onInput }) {
     onInput(hex);
   };
 
+  // The pad sits at the bottom of the sheet. While there is still content below the fold, a
+  // mostly vertical drag on it scrolls the sheet instead of picking a colour; once the sheet
+  // is at the end, the same drag picks hue/saturation as usual.
+  let gesture = null;
   el.addEventListener('pointerdown', (ev) => {
     try { el.setPointerCapture(ev.pointerId); } catch { /* capture is a nicety, not a requirement */ }
-    dragging = true;
-    el.classList.add('dragging');
+    const sheet = el.closest('.sheet');
+    gesture = { x: ev.clientX, y: ev.clientY, mode: null, sheet, top: sheet ? sheet.scrollTop : 0 };
+  });
+  el.addEventListener('pointermove', (ev) => {
+    if (!gesture) return;
+    const dx = ev.clientX - gesture.x;
+    const dy = ev.clientY - gesture.y;
+    if (!gesture.mode) {
+      const sheet = gesture.sheet;
+      const max = sheet ? sheet.scrollHeight - sheet.clientHeight : 0;
+      if (sheet && max > 0 && gesture.top < max - 1 && Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx)) {
+        gesture.mode = 'scroll';
+      } else if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
+        gesture.mode = 'pick';
+        dragging = true;
+        el.classList.add('dragging');
+      } else return;
+    }
+    if (gesture.mode === 'scroll') {
+      gesture.sheet.scrollTop = clamp(gesture.top - dy, 0, gesture.sheet.scrollHeight - gesture.sheet.clientHeight);
+      return;
+    }
     pick(ev);
   });
-  el.addEventListener('pointermove', (ev) => { if (dragging) pick(ev); });
-  const end = () => { dragging = false; el.classList.remove('dragging'); };
+  const end = (ev) => {
+    if (!gesture) return;
+    if (ev.type === 'pointerup' && !gesture.mode) pick(ev); // a tap is a colour, not a scroll
+    gesture = null;
+    dragging = false;
+    el.classList.remove('dragging');
+  };
   el.addEventListener('pointerup', end);
-  el.addEventListener('pointercancel', end);
+  el.addEventListener('pointercancel', () => { gesture = null; dragging = false; el.classList.remove('dragging'); });
   el.addEventListener('keydown', (ev) => {
     const step = { ArrowLeft: [-0.02, 0], ArrowRight: [0.02, 0], ArrowUp: [0, -0.05], ArrowDown: [0, 0.05] }[ev.key];
     if (!step) return;

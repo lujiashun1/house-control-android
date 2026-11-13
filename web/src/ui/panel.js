@@ -46,9 +46,9 @@ function fanLevel(s) {
   return s.on ? Math.max(1, Math.min(5, s.speed)) : 0;
 }
 
-// "35% open · 62% sheer": how much light the cloth lets through is the sheer figure.
+// The tile only says how far the cloth is drawn; sheer stays in the detail sheet.
 function curtainStatus(s) {
-  return `${Math.round(s.open * 100)}% open · ${Math.round(s.opacity * 100)}% sheer`;
+  return `${Math.round(s.open * 100)}% open`;
 }
 
 // A percentage the entity's own step can reach (percentage_step 20 → 20, 40, 60, 80, 100).
@@ -522,6 +522,7 @@ export function createPanel(root, config, store, { onFocus, onMenu }) {
           : target.kind === 'curtain' ? curtainSheet(target.id)
             : target.kind === 'climate' ? climateSheet(target.id) : lightSheet(target.id);
     sheet.replaceChildren(...sheetView.nodes);
+    sheet.scrollTop = 0;
     panel.classList.add('hidden');
     sheet.classList.remove('hidden');
     panel.inert = true;
